@@ -26,6 +26,7 @@ export class Runner {
   private prev: Snapshot | null = null;
   private coastTicks = 0;
   private bestAtStart = 0;
+  private airTicks = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
@@ -111,6 +112,7 @@ export class Runner {
       this.recorder = new InputRecorder();
       this.finishedHandled = false;
       this.coastTicks = 0;
+      this.airTicks = 0;
       this.acc = 0;
       const jump = import.meta.env.DEV ? Number(new URLSearchParams(location.search).get("x")) : 0;
       if (jump > 0) this.teleport(jump);
@@ -152,6 +154,7 @@ export class Runner {
         this.recorder.record(sim.tick, m);
         this.prev = snapshot(sim);
         sim.step(m);
+        this.airTicks = sim.wheels.every((w) => w.fn === 0) ? this.airTicks + 1 : 0;
         this.acc -= STEP;
       }
     } else if (!paused && sim.reason === "crash" && this.coastTicks < TICK_RATE * 6) {
@@ -170,10 +173,21 @@ export class Runner {
     const alpha = Math.min(1, this.acc / STEP);
     this.renderer.draw(sim, this.prev ?? snapshot(sim), alpha, now / 1000, dt);
     const hud = useStore.getState().hud;
-    const fuel = sim.fuel / sim.fuelCapacity;
-    const biome = biomeAt(sim.config, sim.chassis.x).name;
-    if (hud.distance !== sim.distance || hud.coins !== sim.coins || Math.abs(hud.fuel - fuel) > 0.005 || hud.biome !== biome) {
-      useStore.getState().setHud({ distance: sim.distance, coins: sim.coins, fuel, biome });
+    const next = {
+      distance: sim.distance,
+      coins: sim.coins,
+      fuel: sim.fuel / sim.fuelCapacity,
+      biome: biomeAt(sim.config, sim.chassis.x).name,
+      mask: paused || sim.finished ? 0 : this.mask(),
+      airborne: !sim.finished && this.airTicks > TICK_RATE * 0.3,
+      rearing: !sim.finished && Math.atan2(sim.chassis.s, sim.chassis.c) > 0.95,
+      started: this.recorder.events.length > 0,
+    };
+    if (
+      hud.distance !== next.distance || hud.coins !== next.coins || Math.abs(hud.fuel - next.fuel) > 0.005 || hud.biome !== next.biome ||
+      hud.mask !== next.mask || hud.airborne !== next.airborne || hud.rearing !== next.rearing || hud.started !== next.started
+    ) {
+      useStore.getState().setHud(next);
     }
   };
 

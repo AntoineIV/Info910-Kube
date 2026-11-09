@@ -15,11 +15,15 @@ export interface LastRun {
   newBest?: boolean;
 }
 
-interface Hud {
+export interface Hud {
   distance: number;
   coins: number;
   fuel: number;
   biome: string;
+  mask: number;
+  airborne: boolean;
+  rearing: boolean;
+  started: boolean;
 }
 
 interface State {
@@ -71,7 +75,7 @@ export const useStore = create<State>((set, get) => ({
   screen: "title",
   busy: false,
   restart: () => {},
-  hud: { distance: 0, coins: 0, fuel: 1, biome: defaultConfig.biomes[0].name },
+  hud: { distance: 0, coins: 0, fuel: 1, biome: defaultConfig.biomes[0].name, mask: 0, airborne: false, rearing: false, started: false },
   lastRun: null,
   leaderboard: [],
   error: null,

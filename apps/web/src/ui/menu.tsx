@@ -1,4 +1,5 @@
 import { useStore } from "../store";
+import { HowToPlay } from "./guide";
 import { Coin, Home, Play, Restart, Trophy, User, Wrench } from "./icons";
 
 function Keycap({ children }: { children: React.ReactNode }) {
@@ -50,6 +51,7 @@ function Footer() {
       <span className={`chip ${online ? "ok" : "warn"}`}>
         <i className="dot" /> {online ? `online · ${servedBy ?? "…"}` : "offline · guest mode"}
       </span>
+      {online && !user && <span className="chip">Guest: sign in to save scores and earn coins</span>}
     </div>
   );
 }
@@ -64,12 +66,10 @@ export function TitleScreen() {
         <small>an endless hill drive</small>
       </div>
       <button className="cta" onClick={() => setScreen("playing")}>
-        <Play /> Drive
+        <Play /> Drive <kbd className="keycap">→</kbd>
       </button>
-      <div className="hint">or just press <kbd className="keycap">→</kbd></div>
-      {!user && <div className="hint muted">Playing as guest: sign in to save scores and earn coins.</div>}
+      <HowToPlay />
       <MenuNav />
-      <Controls />
       <Footer />
     </div>
   );
@@ -92,8 +92,8 @@ export function PauseMenu() {
           <Home /> Main menu
         </button>
       </div>
+      <HowToPlay />
       <MenuNav />
-      <Controls />
       <Footer />
     </div>
   );

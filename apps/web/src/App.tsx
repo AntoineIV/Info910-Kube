@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Runner } from "./game/runner";
 import { useStore } from "./store";
+import { Hints, KeyGuide } from "./ui/guide";
 import { EndCard, Hud } from "./ui/hud";
 import { PauseMenu, TitleScreen } from "./ui/menu";
 import { Modal } from "./ui/panels";
@@ -40,6 +41,8 @@ export function App() {
     <div className={`app screen-${screen}`}>
       <canvas ref={canvas} className="stage" />
       <Hud />
+      <KeyGuide />
+      <Hints />
       <EndCard />
       {screen === "title" && <TitleScreen />}
       {screen === "paused" && <PauseMenu />}

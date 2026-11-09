@@ -223,6 +223,8 @@ echo "$(minikube ip) talus.local" | sudo tee -a /etc/hosts
 
 Il ne reste qu'à ouvrir <http://talus.local>.
 
+Sur un cluster neuf et sans cache Docker, compter environ 2 min pour la construction des images et 3 à 4 min pour le déploiement : il faut télécharger les images de base et le contrôleur d'Ingress, puis initialiser la base.
+
 Ce que fait `scripts/deploy.sh` :
 1. `minikube addons enable ingress` : installe le contrôleur d'Ingress nginx, puis attend qu'il soit prêt.
 2. `kubectl apply -f k8s/00-namespace.yaml` : le namespace doit exister avant les objets qu'il contient.
@@ -252,7 +254,12 @@ curl -s -D - -o /dev/null -H "Host: talus.local" http://$(minikube ip)/api/confi
 
 Au premier démarrage, il est normal que les pods `api` restent non prêts pendant une à deux minutes. Leur sonde de démarrage attend que Postgres ait fini son initialisation, puis applique les migrations.
 
-Pour jouer une partie sans navigateur, et la voir vérifiée : `scripts/bot.sh --ip=$(minikube ip)`.
+Pour jouer une partie sans navigateur, et la voir vérifiée, il faut Node.js 24 et pnpm :
+
+```bash
+pnpm install                       # une seule fois, à la racine du dépôt
+scripts/bot.sh --ip=$(minikube ip)
+```
 
 ### Problèmes fréquents
 
@@ -356,7 +363,7 @@ kubectl apply -f k8s/20-configmap-game.yaml
 ```
 
 Ce qui se passe ensuite :
-1. Le kubelet met à jour le fichier monté dans chaque pod api, après un délai variable (de quelques secondes à environ une minute).
+1. Le kubelet met à jour le fichier monté dans chaque pod api, après un délai variable : de quelques secondes à environ 1 min 30 (75 s mesurées sur un minikube neuf).
 2. L'API relit le fichier toutes les 5 s (`CONFIG_RELOAD_MS`), le valide avec Zod et l'enregistre en base sous son hash. Une valeur invalide (par exemple une gravité négative) est refusée avec un message dans les logs, et l'ancienne configuration reste active.
 3. Les **nouvelles** parties utilisent la nouvelle configuration. Celles déjà commencées sont rejouées par le verifier avec la configuration de leur début, retrouvée par son hash.
 
@@ -373,13 +380,13 @@ Les valeurs par défaut sont aussi définies dans le code (`packages/game-core/s
 
 ## 7. Démonstrations reproductibles
 
-Chaque script s'exécute sur le cluster déployé et affiche ce qu'il fait, étape par étape. Les démos 3 et 4 utilisent le bot, qui demande Node.js et un `pnpm install` préalable. Tous les scripts ont été exécutés pendant le développement. Les résultats ci-dessous sont résumés.
+Chaque script s'exécute sur le cluster déployé et affiche ce qu'il fait, étape par étape. Les démos 3 et 4 utilisent le bot, qui demande Node.js et un `pnpm install` préalable. Tous ont été exécutés sur un minikube neuf, déployé depuis un nouveau clone du dépôt en suivant la section 4. Les résultats ci-dessous sont résumés, et les valeurs exactes (distances, pièces, noms de pods) changent d'une exécution à l'autre.
 
 ### Démo 1 : supprimer le pod de la base (`scripts/demo-db-resilience.sh`)
 
 *Ce qu'elle montre : StatefulSet, PVC, et la différence entre readiness et liveness.*
 - `kubectl delete pod postgres-0` : le pod est recréé sous le **même nom**, avec le **même PVC** (`data-postgres-0`). Les joueurs et le classement sont identiques après coup.
-- Panne prolongée (le StatefulSet est ramené à 0 réplique pendant environ 40 s) : au bout d'environ 10 s, les deux pods api passent `ready=false` et quittent les endpoints, et l'Ingress répond 503. Au retour de la base, ils redeviennent prêts **d'eux-mêmes**.
+- Panne prolongée (le StatefulSet est ramené à 0 réplique pendant environ 40 s) : au bout de 10 à 15 s (deux échecs consécutifs de la sonde readiness, testée toutes les 5 s), les deux pods api passent `ready=false` et quittent les endpoints, et l'Ingress répond 503. Au retour de la base, ils redeviennent prêts **d'eux-mêmes**.
 - Compteur de redémarrages des pods api : `0 0 → 0 0`. La liveness n'a pas réagi à la panne de base, comme prévu.
 
 ### Démo 2 : changer la gravité à chaud (`scripts/demo-config.sh`)
@@ -393,7 +400,7 @@ Chaque script s'exécute sur le cluster déployé et affiche ce qu'il fait, éta
 
 *Ce qu'elle montre : un worker sans Service, mis à l'échelle indépendamment, et le partage du travail entre répliques.*
 - Le verifier passe à 3 répliques (`kubectl scale`), et 6 bots jouent en même temps. Deux d'entre eux annoncent 3 fois leur vraie distance et 500 pièces de trop.
-- Résultat obtenu : 4 parties `VERIFIED` et 2 `REJECTED` (`claimed 1014 m / 515 coins, replay gave 338 m / 15 coins`), réparties entre plusieurs pods (`verified_by`). Les tricheurs n'apparaissent pas au classement.
+- Résultat obtenu : 4 parties `VERIFIED` et 2 `REJECTED` (par exemple `claimed 987 m / 535 coins, replay gave 329 m / 35 coins`), réparties entre plusieurs pods (`verified_by`). Les tricheurs n'apparaissent pas au classement.
 - On peut aussi jouer une seule partie à la main : `scripts/bot.sh --ip=$(minikube ip) [--cheat]`.
 
 ### Démo 4 : sinistre et restauration (`scripts/demo-backup-restore.sh`)

@@ -31,6 +31,38 @@ function palette(config: GameConfig, x: number) {
   };
 }
 
+export interface Snapshot {
+  x: number;
+  y: number;
+  c: number;
+  s: number;
+  vx: number;
+  wheels: { x: number; y: number; angle: number }[];
+}
+
+export function snapshot(sim: Sim): Snapshot {
+  const ch = sim.chassis;
+  return { x: ch.x, y: ch.y, c: ch.c, s: ch.s, vx: ch.vx, wheels: sim.wheels.map((w) => ({ x: w.x, y: w.y, angle: w.angle })) };
+}
+
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
+
+function interpolate(a: Snapshot, b: Snapshot, t: number): Snapshot {
+  const c = lerp(a.c, b.c, t);
+  const s = lerp(a.s, b.s, t);
+  const n = Math.hypot(c, s) || 1;
+  return {
+    x: lerp(a.x, b.x, t),
+    y: lerp(a.y, b.y, t),
+    c: c / n,
+    s: s / n,
+    vx: lerp(a.vx, b.vx, t),
+    wheels: a.wheels.map((w, i) => ({ x: lerp(w.x, b.wheels[i].x, t), y: lerp(w.y, b.wheels[i].y, t), angle: lerp(w.angle, b.wheels[i].angle, t) })),
+  };
+}
+
 export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
   private camX = 0;
@@ -50,21 +82,25 @@ export class Renderer {
     }
   }
 
-  draw(sim: Sim, time: number) {
+  private camVx = 0;
+
+  draw(sim: Sim, prev: Snapshot, alpha: number, time: number, dt: number) {
     this.resize();
     const { ctx, canvas } = this;
     const W = canvas.width;
     const H = canvas.height;
     const scale = H / 15;
-    const ch = sim.chassis;
-    const targetX = ch.x + 5 + Math.max(-3, Math.min(6, ch.vx * 0.25));
+    const ch = interpolate(prev, snapshot(sim), alpha);
+    const reset = sim.tick < 2 || dt === 0;
+    this.camVx = reset ? ch.vx : this.camVx + (ch.vx - this.camVx) * (1 - Math.exp(-dt * 1.5));
+    const targetX = ch.x + 5 + Math.max(-3, Math.min(6, this.camVx * 0.25));
     const targetY = ch.y + 1.2;
-    if (sim.tick < 2) {
+    if (reset) {
       this.camX = targetX;
       this.camY = targetY;
     }
-    this.camX += (targetX - this.camX) * 0.12;
-    this.camY += (targetY - this.camY) * 0.08;
+    this.camX = targetX + (this.camX - targetX) * Math.exp(-dt * 8);
+    this.camY = targetY + (this.camY - targetY) * Math.exp(-dt * 3);
     const left = this.camX - W / 2 / scale;
     const right = this.camX + W / 2 / scale;
     const sx = (x: number) => (x - this.camX) * scale + W / 2;
@@ -141,7 +177,7 @@ export class Renderer {
       }
     }
 
-    this.drawVehicle(sim, sx, sy, scale);
+    this.drawVehicle(ch, sx, sy, scale);
   }
 
   private drawHills(W: number, H: number, parallax: number, height: number, color: string, alpha: number) {
@@ -162,12 +198,11 @@ export class Renderer {
     ctx.globalAlpha = 1;
   }
 
-  private drawVehicle(sim: Sim, sx: (x: number) => number, sy: (y: number) => number, scale: number) {
+  private drawVehicle(ch: Snapshot, sx: (x: number) => number, sy: (y: number) => number, scale: number) {
     const { ctx } = this;
-    const ch = sim.chassis;
     const angle = Math.atan2(ch.s, ch.c);
 
-    for (const wh of sim.wheels) {
+    for (const wh of ch.wheels) {
       const anchorX = sx(wh.x);
       const anchorY = sy(wh.y);
       ctx.strokeStyle = "#3a3a3a";
@@ -203,7 +238,7 @@ export class Renderer {
     ctx.fill();
     ctx.restore();
 
-    for (const wh of sim.wheels) {
+    for (const wh of ch.wheels) {
       const px = sx(wh.x);
       const py = sy(wh.y);
       const r = WHEEL_RADIUS * scale;

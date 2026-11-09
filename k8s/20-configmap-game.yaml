@@ -31,18 +31,18 @@ data:
         "capacity": 100,
         "burnPerSecond": 1.2,
         "burnGasPerSecond": 3.2,
-        "canSpacing": 220,
-        "canSpacingGrowth": 0.12
+        "canSpacing": 180,
+        "canSpacingGrowth": 0.15
       },
       "terrain": {
-        "flatStart": 30,
-        "rampDistance": 2500,
-        "segmentMax": 34,
-        "segmentMin": 13,
-        "amplitudeMin": 1.5,
-        "amplitudeMax": 11,
-        "slopeMin": 0.3,
-        "slopeMax": 0.95
+        "flatStart": 15,
+        "rampDistance": 1500,
+        "segmentMax": 24,
+        "segmentMin": 10,
+        "amplitudeMin": 3.5,
+        "amplitudeMax": 14,
+        "slopeMin": 0.55,
+        "slopeMax": 1.05
       },
       "coins": {
         "rowChance": 0.35,

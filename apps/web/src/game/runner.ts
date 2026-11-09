@@ -1,7 +1,7 @@
 import { biomeAt, InputRecorder, INPUT_BRAKE, INPUT_GAS, NO_UPGRADES, Sim, TICK_RATE } from "@talus/game-core";
 import { api, type RunTicket } from "../api";
 import { useStore, type LastRun } from "../store";
-import { Renderer } from "./render";
+import { Renderer, snapshot, type Snapshot } from "./render";
 
 const STEP = 1 / TICK_RATE;
 const REASONS: Record<string, string> = {
@@ -23,6 +23,7 @@ export class Runner {
   private frame = 0;
   private starting = false;
   private finishedHandled = false;
+  private prev: Snapshot | null = null;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
@@ -87,6 +88,7 @@ export class Runner {
       this.recorder = new InputRecorder();
       this.finishedHandled = false;
       this.acc = 0;
+      this.prev = snapshot(this.sim);
       useStore.getState().setLastRun(null);
     } finally {
       this.starting = false;
@@ -105,12 +107,14 @@ export class Runner {
       while (this.acc >= STEP && !sim.finished) {
         const m = this.mask();
         this.recorder.record(sim.tick, m);
+        this.prev = snapshot(sim);
         sim.step(m);
         this.acc -= STEP;
       }
     }
     if (sim.finished && !this.finishedHandled) this.finish(sim.reason ?? "crash");
-    this.renderer.draw(sim, now / 1000);
+    const alpha = sim.finished ? 1 : Math.min(1, this.acc / STEP);
+    this.renderer.draw(sim, this.prev ?? snapshot(sim), alpha, now / 1000, dt);
     const hud = useStore.getState().hud;
     const fuel = sim.fuel / sim.fuelCapacity;
     const biome = biomeAt(sim.config, sim.chassis.x).name;

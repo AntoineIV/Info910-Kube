@@ -35,8 +35,10 @@ export class Terrain {
   }
 
   private difficulty(x: number): number {
-    const k = x / this.config.terrain.rampDistance;
-    return k > 1 ? 1 : k < 0 ? 0 : k;
+    let k = x / this.config.terrain.rampDistance;
+    k = k > 1 ? 1 : k < 0 ? 0 : k;
+    const r = 1 - k;
+    return 1 - r * r;
   }
 
   private generateNext(): void {

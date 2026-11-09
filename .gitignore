@@ -2,3 +2,6 @@ node_modules/
 dist/
 .env
 *.log
+
+# Documents personnels (énoncé, cours, spec) : restent en local
+docs/

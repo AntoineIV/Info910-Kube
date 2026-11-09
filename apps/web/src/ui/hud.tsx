@@ -34,6 +34,7 @@ export function Hud() {
       <div className={`fuel ${hud.fuel < 0.25 ? "low" : ""}`}>
         <div style={{ width: `${Math.round(hud.fuel * 100)}%` }} />
       </div>
+      <div key={hud.biome} className="banner">{hud.biome}</div>
       <div className="keys">→ gas · ← brake · in the air, they tilt · R restart</div>
     </div>
   );

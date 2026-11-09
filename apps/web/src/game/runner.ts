@@ -88,10 +88,25 @@ export class Runner {
       this.recorder = new InputRecorder();
       this.finishedHandled = false;
       this.acc = 0;
+      const jump = import.meta.env.DEV ? Number(new URLSearchParams(location.search).get("x")) : 0;
+      if (jump > 0) this.teleport(jump);
       this.prev = snapshot(this.sim);
       useStore.getState().setLastRun(null);
     } finally {
       this.starting = false;
+    }
+  }
+
+  private teleport(x: number) {
+    const sim = this.sim!;
+    const dx = x - sim.chassis.x;
+    const dy = sim.terrain.sample(x).h + 0.3 - sim.terrain.sample(sim.chassis.x).h;
+    sim.terrain.ensure(x + 60);
+    sim.chassis.x += dx;
+    sim.chassis.y += dy;
+    for (const w of sim.wheels) {
+      w.x += dx;
+      w.y += dy;
     }
   }
 

@@ -43,3 +43,5 @@ button.link { background: none; text-decoration: underline; font-weight: 400; }
 .pips { display: flex; gap: 4px; margin-top: 4px; }
 .pips span { width: 18px; height: 6px; border-radius: 3px; background: #dde3ea; }
 .pips span.on { background: #e4572e; }
+.banner { position: fixed; left: 0; right: 0; top: 22%; text-align: center; font-size: 3.2rem; font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase; color: #fff; text-shadow: 0 3px 0 rgba(0,0,0,0.25); opacity: 0; animation: banner 2.8s ease-out; pointer-events: none; }
+@keyframes banner { 0% { opacity: 0; transform: translateY(12px); } 15% { opacity: 1; transform: none; } 70% { opacity: 1; } 100% { opacity: 0; } }

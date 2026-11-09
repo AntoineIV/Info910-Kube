@@ -19,7 +19,7 @@ Talus est un jeu de conduite 2D pour navigateur : un petit véhicule roule sur u
 - La partie s'arrête si la tête du pilote touche le sol ou s'il n'y a plus d'essence. Le score est la distance parcourue.
 - On peut jouer tout de suite, sans compte (mode invité). Avec un compte (bouton **Sign in to save**), chaque partie est vérifiée par le serveur : la distance entre alors au **Leaderboard** et les pièces sont créditées.
 - Le **Garage** permet d'acheter avec ces pièces 4 améliorations : moteur, pneus, suspension et réservoir.
-- Le terrain traverse 4 biomes (Meadow, Desert, Tundra, Dusk), chacun avec sa palette et son adhérence.
+- Le terrain traverse 5 biomes, chacun avec son ciel, ses montagnes, sa végétation, sa météo et son adhérence : **Meadow** (arbres, fleurs, pollen), **Desert** (mesas, cactus, vent de sable), **Tundra** (sapins enneigés, aurore boréale, neige, sol glissant), **Volcano** (volcan fumant, roches de lave, braises), **Dusk** (lune, étoiles, cristaux et champignons lumineux, lucioles). Les phares s'allument dans les biomes sombres. Tout l'habillage d'un biome (couleurs, objets, densité, météo) est décrit dans la ConfigMap `game-config`.
 - En haut à droite, `served by api-xxxx` indique le pod de l'API qui a répondu.
 
 ### Pourquoi une physique « maison »

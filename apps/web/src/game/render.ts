@@ -1,35 +1,5 @@
-import { HEAD, HEAD_RADIUS, HULL, WHEEL_RADIUS, type GameConfig, type Sim } from "@talus/game-core";
-
-type Rgb = [number, number, number];
-
-function hex(c: string): Rgb {
-  const n = parseInt(c.slice(1), 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
-
-function mix(a: string, b: string, t: number): string {
-  const x = hex(a);
-  const y = hex(b);
-  const r = x.map((v, i) => Math.round(v + (y[i] - v) * t));
-  return `rgb(${r[0]},${r[1]},${r[2]})`;
-}
-
-function palette(config: GameConfig, x: number) {
-  const biomes = config.biomes;
-  let i = 0;
-  while (i + 1 < biomes.length && x >= biomes[i + 1].from) i++;
-  const cur = biomes[i];
-  const next = biomes[i + 1];
-  const blend = next ? Math.max(0, Math.min(1, (x - (next.from - 120)) / 120)) : 0;
-  const pick = (k: "hills" | "ground" | "surface") => (next ? mix(cur[k], next[k], blend) : mix(cur[k], cur[k], 0));
-  return {
-    skyTop: next ? mix(cur.sky[0], next.sky[0], blend) : cur.sky[0],
-    skyBottom: next ? mix(cur.sky[1], next.sky[1], blend) : cur.sky[1],
-    hills: pick("hills"),
-    ground: pick("ground"),
-    surface: pick("surface"),
-  };
-}
+import { HEAD, HEAD_RADIUS, HULL, WHEEL_RADIUS, type Biome, type Sim } from "@talus/game-core";
+import { biomeOf, drawClouds, drawFar, drawHills, drawProp, drawSky, drawWeather, hash, luminance, palette, Particles, shade } from "./scenery";
 
 export interface Snapshot {
   x: number;
@@ -63,10 +33,16 @@ function interpolate(a: Snapshot, b: Snapshot, t: number): Snapshot {
   };
 }
 
+const PROP_SPACING = 5;
+const DUST: Record<Biome["detail"], string> = { grass: "#8a6a45", sand: "#f3d9a4", snow: "#ffffff", ash: "#6b5a55", moss: "#b89be0" };
+
 export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
   private camX = 0;
   private camY = 0;
+  private camVx = 0;
+  private readonly particles = new Particles();
+  private lastSim: Sim | null = null;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext("2d")!;
@@ -82,10 +58,12 @@ export class Renderer {
     }
   }
 
-  private camVx = 0;
-
   draw(sim: Sim, prev: Snapshot, alpha: number, time: number, dt: number) {
     this.resize();
+    if (this.lastSim !== sim) {
+      this.particles.clear();
+      this.lastSim = sim;
+    }
     const { ctx, canvas } = this;
     const W = canvas.width;
     const H = canvas.height;
@@ -105,48 +83,200 @@ export class Renderer {
     const right = this.camX + W / 2 / scale;
     const sx = (x: number) => (x - this.camX) * scale + W / 2;
     const sy = (y: number) => H * 0.55 - (y - this.camY) * scale;
-    const pal = palette(sim.config, ch.x);
+    const biomes = sim.config.biomes;
+    const { pal, cur, next, blend } = palette(biomes, ch.x);
 
-    const sky = ctx.createLinearGradient(0, 0, 0, H);
+    const sky = ctx.createLinearGradient(0, 0, 0, H * 0.8);
     sky.addColorStop(0, pal.skyTop);
     sky.addColorStop(1, pal.skyBottom);
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, W, H);
+    drawSky(ctx, W, H, pal, cur, this.camX, time, 1 - blend);
+    if (next && blend > 0) drawSky(ctx, W, H, pal, next, this.camX, time, blend);
+    const backdrop = blend > 0.5 && next ? next : cur;
+    drawClouds(ctx, W, H, pal.cloud, this.camX, time, backdrop.landmark === "volcano");
+    drawFar(ctx, W, H, pal, backdrop, this.camX, time);
+    const silhouette = backdrop.props.includes("pine") ? "pine" : backdrop.props.includes("cactus") ? "cactus" : backdrop.props.includes("tree") ? "tree" : null;
+    drawHills(ctx, W, H, pal.hills, this.camX, silhouette);
 
-    this.drawHills(W, H, 0.15, 0.42, pal.hills, 0.45);
-    this.drawHills(W, H, 0.35, 0.55, pal.hills, 0.8);
+    const terrain = sim.terrain;
+    const startSlot = Math.floor((left - 4) / PROP_SPACING);
+    const endSlot = Math.ceil((right + 4) / PROP_SPACING);
+    for (let k = startSlot; k <= endSlot; k++) {
+      if (k * PROP_SPACING < 8) continue;
+      const x = k * PROP_SPACING + hash(k * 0.73) * PROP_SPACING;
+      const b = biomeOf(biomes, x);
+      if (b.props.length === 0 || hash(k * 1.91 + 7) > b.propDensity) continue;
+      const kind = b.props[Math.floor(hash(k * 3.17) * b.props.length)];
+      const h = terrain.sample(x).h;
+      ctx.globalAlpha = 0.95;
+      drawProp(ctx, kind, sx(x), sy(h - 0.15), scale, hash(k * 5.3), time);
+    }
+    ctx.globalAlpha = 1;
 
     const step = Math.max(0.25, 4 / scale);
-    ctx.beginPath();
-    ctx.moveTo(sx(left - 1), H + 10);
-    for (let x = left - 1; x <= right + 1; x += step) ctx.lineTo(sx(x), sy(sim.terrain.sample(x).h));
-    ctx.lineTo(sx(right + 1), H + 10);
-    ctx.closePath();
-    ctx.fillStyle = pal.ground;
-    ctx.fill();
-    ctx.beginPath();
+    const xs: number[] = [];
+    const ys: number[] = [];
     for (let x = left - 1; x <= right + 1; x += step) {
-      const px = sx(x);
-      const py = sy(sim.terrain.sample(x).h);
-      if (x === left - 1) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
+      xs.push(sx(x));
+      ys.push(sy(terrain.sample(x).h));
     }
-    ctx.lineWidth = scale * 0.28;
+    let minY = H;
+    for (const y of ys) minY = Math.min(minY, y);
+    const ground = ctx.createLinearGradient(0, minY, 0, H);
+    ground.addColorStop(0, pal.ground);
+    ground.addColorStop(1, shade(pal.ground, -0.45));
+    ctx.beginPath();
+    ctx.moveTo(xs[0], H + 10);
+    for (let i = 0; i < xs.length; i++) ctx.lineTo(xs[i], ys[i]);
+    ctx.lineTo(xs[xs.length - 1], H + 10);
+    ctx.closePath();
+    ctx.fillStyle = ground;
+    ctx.fill();
+
+    ctx.fillStyle = shade(pal.ground, -0.2);
+    for (let k = Math.floor(left / 2.2); k <= Math.ceil(right / 2.2); k++) {
+      const x = k * 2.2 + hash(k * 9.1) * 2;
+      const depth = 0.9 + hash(k * 4.4) * 4;
+      const h = terrain.sample(x).h - depth;
+      const r = 0.12 + hash(k * 2.2) * 0.22;
+      ctx.beginPath();
+      ctx.ellipse(sx(x), sy(h), r * scale * 1.4, r * scale, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.beginPath();
+    for (let i = 0; i < xs.length; i++) {
+      if (i === 0) ctx.moveTo(xs[i], ys[i] + scale * 0.12);
+      else ctx.lineTo(xs[i], ys[i] + scale * 0.12);
+    }
+    ctx.lineWidth = scale * 0.3;
     ctx.lineJoin = "round";
+    ctx.strokeStyle = shade(pal.surface, -0.25);
+    ctx.stroke();
+    ctx.beginPath();
+    for (let i = 0; i < xs.length; i++) {
+      if (i === 0) ctx.moveTo(xs[i], ys[i]);
+      else ctx.lineTo(xs[i], ys[i]);
+    }
+    ctx.lineWidth = scale * 0.26;
     ctx.strokeStyle = pal.surface;
     ctx.stroke();
 
-    ctx.font = `bold ${Math.round(scale * 0.45)}px system-ui, sans-serif`;
-    ctx.textAlign = "center";
-    for (let m = Math.ceil(left / 100) * 100; m <= right; m += 100) {
-      if (m <= 0) continue;
-      const base = sim.terrain.sample(m).h;
-      ctx.fillStyle = "rgba(0,0,0,0.35)";
-      ctx.fillRect(sx(m) - scale * 0.04, sy(base + 2.2), scale * 0.08, scale * 2.2);
-      ctx.fillStyle = "#fff";
-      ctx.fillText(`${m} m`, sx(m), sy(base + 2.4));
-    }
+    this.drawSurfaceDetail(sim, left, right, sx, sy, scale, time);
+    this.drawMarkers(sim, left, right, sx, sy, scale);
+    this.drawPickups(sim, left, right, sx, sy, scale, time);
 
+    this.emitDust(sim, cur, dt);
+    this.particles.update(dt, 4);
+    this.particles.draw(ctx, sx, sy, scale);
+
+    const dark = luminance(pal.skyTop) < 0.25;
+    if (dark) this.drawHeadlight(ch, sx, sy, scale);
+    this.drawVehicle(ch, sx, sy, scale);
+
+    drawWeather(ctx, W, H, cur.weather, this.camX, this.camY, time, 1 - blend);
+    if (next && blend > 0) drawWeather(ctx, W, H, next.weather, this.camX, this.camY, time, blend);
+
+    if (dark) {
+      const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.95);
+      v.addColorStop(0, "rgba(0,0,0,0)");
+      v.addColorStop(1, "rgba(5,0,20,0.45)");
+      ctx.fillStyle = v;
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+
+  private drawSurfaceDetail(sim: Sim, left: number, right: number, sx: (x: number) => number, sy: (y: number) => number, m: number, time: number) {
+    const { ctx } = this;
+    const biomes = sim.config.biomes;
+    for (let k = Math.floor(left / 0.9); k <= Math.ceil(right / 0.9); k++) {
+      const x = k * 0.9 + hash(k * 1.3) * 0.6;
+      const b = biomeOf(biomes, x);
+      const r = hash(k * 7.7);
+      const h = sim.terrain.sample(x).h;
+      const px = sx(x);
+      const py = sy(h) - m * 0.1;
+      switch (b.detail) {
+        case "grass": {
+          if (r > 0.75) break;
+          const sway = Math.sin(time * 2.2 + x * 0.6) * m * 0.05;
+          ctx.strokeStyle = r > 0.4 ? "#3f9a35" : "#6fd45a";
+          ctx.lineWidth = Math.max(1, m * 0.05);
+          ctx.beginPath();
+          ctx.moveTo(px - m * 0.1, py);
+          ctx.lineTo(px - m * 0.16 + sway, py - m * 0.3);
+          ctx.moveTo(px, py);
+          ctx.lineTo(px + sway, py - m * 0.4);
+          ctx.moveTo(px + m * 0.1, py);
+          ctx.lineTo(px + m * 0.18 + sway, py - m * 0.28);
+          ctx.stroke();
+          break;
+        }
+        case "sand": {
+          if (r > 0.35) break;
+          ctx.fillStyle = "rgba(160,100,40,0.35)";
+          ctx.fillRect(px, py + m * 0.25, m * 0.35, Math.max(1, m * 0.04));
+          break;
+        }
+        case "snow": {
+          if (r > 0.3) break;
+          ctx.fillStyle = "#ffffff";
+          ctx.beginPath();
+          ctx.ellipse(px, py + m * 0.02, m * (0.2 + r * 0.6), m * 0.12, 0, Math.PI, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        case "ash": {
+          if (r > 0.25) break;
+          const pulse = 0.5 + 0.5 * Math.sin(time * 2 + x);
+          ctx.strokeStyle = `rgba(255,${Math.round(90 + 80 * pulse)},30,${0.5 + 0.4 * pulse})`;
+          ctx.lineWidth = Math.max(1, m * 0.05);
+          ctx.beginPath();
+          ctx.moveTo(px, py + m * 0.3);
+          ctx.lineTo(px + m * 0.2, py + m * 0.55);
+          ctx.lineTo(px + m * 0.1, py + m * 0.8);
+          ctx.stroke();
+          break;
+        }
+        case "moss": {
+          if (r > 0.3) break;
+          ctx.fillStyle = `rgba(150,255,220,${0.4 + 0.4 * Math.sin(time * 1.5 + x)})`;
+          ctx.beginPath();
+          ctx.arc(px, py - m * 0.05, m * 0.06, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+      }
+    }
+  }
+
+  private drawMarkers(sim: Sim, left: number, right: number, sx: (x: number) => number, sy: (y: number) => number, m: number) {
+    const { ctx } = this;
+    ctx.font = `bold ${Math.round(m * 0.42)}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    for (let d = Math.ceil(left / 100) * 100; d <= right; d += 100) {
+      if (d <= 0) continue;
+      const base = sim.terrain.sample(d).h;
+      const px = sx(d);
+      ctx.fillStyle = "#5b4033";
+      ctx.fillRect(px - m * 0.05, sy(base + 2.6), m * 0.1, m * 2.6);
+      ctx.fillStyle = d % 500 === 0 ? "#ffd166" : "#ffffff";
+      ctx.beginPath();
+      ctx.moveTo(px + m * 0.05, sy(base + 2.6));
+      ctx.lineTo(px + m * 1.5, sy(base + 2.3));
+      ctx.lineTo(px + m * 0.05, sy(base + 2.0));
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.strokeStyle = "rgba(0,0,0,0.45)";
+      ctx.lineWidth = m * 0.08;
+      ctx.strokeText(`${d} m`, px, sy(base + 2.9));
+      ctx.fillText(`${d} m`, px, sy(base + 2.9));
+    }
+  }
+
+  private drawPickups(sim: Sim, left: number, right: number, sx: (x: number) => number, sy: (y: number) => number, m: number, time: number) {
+    const { ctx } = this;
     const t = sim.terrain;
     for (let i = 0; i < t.resolvedPickups; i++) {
       const p = t.pickups[i];
@@ -155,63 +285,93 @@ export class Renderer {
       const px = sx(p.x);
       const py = sy(p.y + bob);
       if (p.kind === "coin") {
-        const squeeze = Math.abs(Math.cos(time * 2.5 + p.x * 0.7));
-        ctx.fillStyle = "#e0a100";
+        const squeeze = 0.35 + 0.65 * Math.abs(Math.cos(time * 2.5 + p.x * 0.7));
+        ctx.fillStyle = "rgba(255,220,100,0.25)";
         ctx.beginPath();
-        ctx.ellipse(px, py, scale * 0.32 * (0.35 + 0.65 * squeeze), scale * 0.32, 0, 0, Math.PI * 2);
+        ctx.arc(px, py, m * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#d99a00";
+        ctx.beginPath();
+        ctx.ellipse(px, py, m * 0.32 * squeeze, m * 0.32, 0, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = "#ffd166";
         ctx.beginPath();
-        ctx.ellipse(px, py, scale * 0.22 * (0.35 + 0.65 * squeeze), scale * 0.22, 0, 0, Math.PI * 2);
+        ctx.ellipse(px, py, m * 0.22 * squeeze, m * 0.22, 0, 0, Math.PI * 2);
         ctx.fill();
+        ctx.fillStyle = "rgba(255,255,255,0.8)";
+        ctx.fillRect(px - m * 0.05 * squeeze, py - m * 0.14, m * 0.06 * squeeze, m * 0.12);
       } else {
-        const w = scale * 0.6;
-        const h = scale * 0.75;
-        ctx.fillStyle = "#d62828";
+        const w = m * 0.62;
+        const h = m * 0.78;
+        ctx.fillStyle = "rgba(255,80,80,0.25)";
         ctx.beginPath();
-        ctx.roundRect(px - w / 2, py - h / 2, w, h, scale * 0.1);
+        ctx.arc(px, py, m * 0.7, 0, Math.PI * 2);
         ctx.fill();
+        ctx.fillStyle = "#c81d25";
+        ctx.beginPath();
+        ctx.roundRect(px - w / 2, py - h / 2, w, h, m * 0.1);
+        ctx.fill();
+        ctx.fillStyle = "#3a3a3a";
+        ctx.fillRect(px - w * 0.15, py - h / 2 - m * 0.14, w * 0.3, m * 0.16);
         ctx.fillStyle = "#fff";
-        ctx.font = `bold ${Math.round(scale * 0.42)}px system-ui, sans-serif`;
-        ctx.fillText("F", px, py + scale * 0.15);
+        ctx.font = `bold ${Math.round(m * 0.42)}px system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.fillText("F", px, py + m * 0.15);
       }
     }
-
-    this.drawVehicle(ch, sx, sy, scale);
   }
 
-  private drawHills(W: number, H: number, parallax: number, height: number, color: string, alpha: number) {
-    const { ctx } = this;
-    const offset = this.camX * parallax * 20;
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.moveTo(0, H);
-    for (let px = 0; px <= W + 8; px += 8) {
-      const u = (px + offset) / W;
-      const y = H * height + Math.sin(u * 5.1) * H * 0.06 + Math.sin(u * 11.7 + 1.3) * H * 0.025;
-      ctx.lineTo(px, y);
+  private emitDust(sim: Sim, biome: Biome, dt: number) {
+    if (dt === 0 || sim.finished) return;
+    const color = DUST[biome.detail];
+    for (const wh of sim.wheels) {
+      if (wh.fn <= 0) continue;
+      const slip = Math.abs(wh.w * WHEEL_RADIUS - (wh.vx * wh.tx + wh.vy * wh.ty));
+      const speed = Math.abs(wh.vx);
+      const rate = Math.min(1, slip * 0.25 + speed * 0.03);
+      if (Math.random() > rate * dt * 60) continue;
+      this.particles.emit({
+        x: wh.x - WHEEL_RADIUS * 0.6,
+        y: wh.y - WHEEL_RADIUS * 0.8,
+        vx: -1.5 - Math.random() * 2 - slip * 0.3,
+        vy: 1 + Math.random() * 2,
+        life: 0,
+        max: 0.5 + Math.random() * 0.5,
+        size: 0.12 + Math.random() * 0.15,
+        color,
+      });
     }
-    ctx.lineTo(W, H);
+  }
+
+  private drawHeadlight(ch: Snapshot, sx: (x: number) => number, sy: (y: number) => number, m: number) {
+    const { ctx } = this;
+    ctx.save();
+    ctx.translate(sx(ch.x), sy(ch.y));
+    ctx.rotate(-Math.atan2(ch.s, ch.c));
+    const beam = ctx.createLinearGradient(1.4 * m, 0, 9 * m, 0);
+    beam.addColorStop(0, "rgba(255,250,200,0.45)");
+    beam.addColorStop(1, "rgba(255,250,200,0)");
+    ctx.fillStyle = beam;
+    ctx.beginPath();
+    ctx.moveTo(1.4 * m, -0.05 * m);
+    ctx.lineTo(9 * m, -1.6 * m);
+    ctx.lineTo(9 * m, 1.6 * m);
+    ctx.lineTo(1.4 * m, 0.15 * m);
     ctx.closePath();
     ctx.fill();
-    ctx.globalAlpha = 1;
+    ctx.restore();
   }
 
-  private drawVehicle(ch: Snapshot, sx: (x: number) => number, sy: (y: number) => number, scale: number) {
+  private drawVehicle(ch: Snapshot, sx: (x: number) => number, sy: (y: number) => number, m: number) {
     const { ctx } = this;
     const angle = Math.atan2(ch.s, ch.c);
 
     for (const wh of ch.wheels) {
-      const anchorX = sx(wh.x);
-      const anchorY = sy(wh.y);
       ctx.strokeStyle = "#3a3a3a";
-      ctx.lineWidth = scale * 0.1;
+      ctx.lineWidth = m * 0.1;
       ctx.beginPath();
-      ctx.moveTo(anchorX, anchorY);
-      const bx = ch.x + (wh.x - ch.x) * 0.55;
-      const by = ch.y + (wh.y - ch.y) * 0.4;
-      ctx.lineTo(sx(bx), sy(by));
+      ctx.moveTo(sx(wh.x), sy(wh.y));
+      ctx.lineTo(sx(ch.x + (wh.x - ch.x) * 0.55), sy(ch.y + (wh.y - ch.y) * 0.4));
       ctx.stroke();
     }
 
@@ -220,32 +380,59 @@ export class Renderer {
     ctx.rotate(-angle);
     ctx.fillStyle = "#e4572e";
     ctx.strokeStyle = "#7a2410";
-    ctx.lineWidth = scale * 0.06;
+    ctx.lineWidth = m * 0.06;
     ctx.beginPath();
-    HULL.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x * scale, -y * scale) : ctx.lineTo(x * scale, -y * scale)));
+    HULL.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x * m, -y * m) : ctx.lineTo(x * m, -y * m)));
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
+    ctx.fillStyle = "#f07a52";
+    ctx.fillRect(-1.2 * m, -0.28 * m, 2.5 * m, 0.1 * m);
+    ctx.fillStyle = "#ffe08a";
+    ctx.fillRect(1.3 * m, -0.12 * m, 0.14 * m, 0.16 * m);
     ctx.fillStyle = "#2b2d42";
-    ctx.fillRect(-0.35 * scale, -0.75 * scale, 0.5 * scale, 0.5 * scale);
+    ctx.fillRect(-0.35 * m, -0.75 * m, 0.5 * m, 0.5 * m);
+    ctx.strokeStyle = "#2b2d42";
+    ctx.lineWidth = m * 0.12;
+    ctx.beginPath();
+    ctx.moveTo(0.1 * m, -0.6 * m);
+    ctx.lineTo(0.55 * m, -0.45 * m);
+    ctx.stroke();
+    ctx.strokeStyle = "#e9c46a";
+    ctx.lineWidth = m * 0.09;
+    ctx.beginPath();
+    ctx.moveTo(-0.15 * m, -0.78 * m);
+    ctx.quadraticCurveTo(-0.6 * m, -0.85 * m, -0.85 * m, -0.6 * m);
+    ctx.stroke();
     ctx.fillStyle = "#ffd6a5";
     ctx.beginPath();
-    ctx.arc(HEAD[0] * scale, -HEAD[1] * scale, HEAD_RADIUS * scale, 0, Math.PI * 2);
+    ctx.arc(HEAD[0] * m, -HEAD[1] * m, HEAD_RADIUS * m, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = "#1d3557";
     ctx.beginPath();
-    ctx.arc(HEAD[0] * scale, -HEAD[1] * scale, HEAD_RADIUS * scale * 1.05, Math.PI, Math.PI * 2);
+    ctx.arc(HEAD[0] * m, -HEAD[1] * m, HEAD_RADIUS * m * 1.05, Math.PI, Math.PI * 2);
     ctx.fill();
+    ctx.fillStyle = "rgba(180,220,255,0.85)";
+    ctx.fillRect(HEAD[0] * m, -HEAD[1] * m - 0.02 * m, HEAD_RADIUS * m * 1.05, 0.1 * m);
     ctx.restore();
 
     for (const wh of ch.wheels) {
       const px = sx(wh.x);
       const py = sy(wh.y);
-      const r = WHEEL_RADIUS * scale;
+      const r = WHEEL_RADIUS * m;
       ctx.fillStyle = "#1f1f1f";
       ctx.beginPath();
       ctx.arc(px, py, r, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = "#333";
+      ctx.lineWidth = r * 0.12;
+      for (let k = 0; k < 10; k++) {
+        const a = -wh.angle + (k * Math.PI) / 5;
+        ctx.beginPath();
+        ctx.moveTo(px + Math.cos(a) * r * 0.82, py + Math.sin(a) * r * 0.82);
+        ctx.lineTo(px + Math.cos(a) * r * 0.98, py + Math.sin(a) * r * 0.98);
+        ctx.stroke();
+      }
       ctx.fillStyle = "#9aa5b1";
       ctx.beginPath();
       ctx.arc(px, py, r * 0.55, 0, Math.PI * 2);
@@ -259,6 +446,10 @@ export class Renderer {
         ctx.lineTo(px + Math.cos(a) * r * 0.55, py + Math.sin(a) * r * 0.55);
         ctx.stroke();
       }
+      ctx.fillStyle = "#e4572e";
+      ctx.beginPath();
+      ctx.arc(px, py, r * 0.14, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 }

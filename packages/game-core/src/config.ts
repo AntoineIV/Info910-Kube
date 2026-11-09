@@ -6,14 +6,26 @@ const upgradeSchema = z.object({
   perLevel: z.number(),
 });
 
+export const PROP_KINDS = ["tree", "bush", "flower", "cactus", "rock", "deadTree", "pine", "snowman", "lavaRock", "crystal", "mushroom"] as const;
+
 const biomeSchema = z.object({
   name: z.string(),
   from: z.number().nonnegative(),
   grip: z.number().positive(),
   sky: z.tuple([z.string(), z.string()]),
+  far: z.string().default("#9cc7c9"),
+  farShape: z.enum(["rolling", "peaks", "mesas"]).default("rolling"),
   hills: z.string(),
   ground: z.string(),
   surface: z.string(),
+  cloud: z.string().default("#ffffff"),
+  celestial: z.enum(["sun", "moon", "none"]).default("sun"),
+  stars: z.boolean().default(false),
+  landmark: z.enum(["none", "volcano", "aurora"]).default("none"),
+  props: z.array(z.enum(PROP_KINDS)).default([]),
+  propDensity: z.number().min(0).max(1).default(0.4),
+  detail: z.enum(["grass", "sand", "snow", "ash", "moss"]).default("grass"),
+  weather: z.enum(["none", "pollen", "dust", "snow", "embers", "fireflies"]).default("none"),
 });
 
 export const gameConfigSchema = z.object({
@@ -60,6 +72,8 @@ export const gameConfigSchema = z.object({
 });
 
 export type GameConfig = z.infer<typeof gameConfigSchema>;
+export type Biome = GameConfig["biomes"][number];
+export type PropKind = (typeof PROP_KINDS)[number];
 export type UpgradeKind = keyof GameConfig["upgrades"];
 export const UPGRADE_KINDS: UpgradeKind[] = ["engine", "tires", "suspension", "tank"];
 export type UpgradeLevels = Record<UpgradeKind, number>;
@@ -106,10 +120,41 @@ export const defaultConfig: GameConfig = {
     tank: { label: "Fuel tank", prices: [50, 110, 210, 360, 560], perLevel: 0.2 },
   },
   biomes: [
-    { name: "Meadow", from: 0, grip: 1, sky: ["#8fd3ff", "#e8f7ff"], hills: "#7fbf7a", ground: "#6b4a2b", surface: "#4caf50" },
-    { name: "Desert", from: 800, grip: 0.92, sky: ["#ffc98b", "#fff1d6"], hills: "#e0b070", ground: "#b07a3e", surface: "#e8c170" },
-    { name: "Tundra", from: 1800, grip: 0.8, sky: ["#b7c9e8", "#f1f5fb"], hills: "#cfd9e6", ground: "#5d6b7a", surface: "#f4f8fc" },
-    { name: "Dusk", from: 3200, grip: 1, sky: ["#3b2a5c", "#d9707a"], hills: "#4c3866", ground: "#2b1f3a", surface: "#9b6fd1" },
+    {
+      name: "Meadow", from: 0, grip: 1,
+      sky: ["#6cc0ff", "#e6f7ff"], far: "#a3c9cf", farShape: "rolling",
+      hills: "#86c47c", ground: "#6b4a2b", surface: "#5cbf4a", cloud: "#ffffff",
+      celestial: "sun", stars: false, landmark: "none",
+      props: ["tree", "tree", "bush", "flower", "flower"], propDensity: 0.6, detail: "grass", weather: "pollen",
+    },
+    {
+      name: "Desert", from: 500, grip: 0.92,
+      sky: ["#f39c4f", "#ffe9c4"], far: "#d99a5e", farShape: "mesas",
+      hills: "#e7b676", ground: "#b5733c", surface: "#f2c97a", cloud: "#fff3df",
+      celestial: "sun", stars: false, landmark: "none",
+      props: ["cactus", "cactus", "rock", "deadTree"], propDensity: 0.35, detail: "sand", weather: "dust",
+    },
+    {
+      name: "Tundra", from: 1100, grip: 0.8,
+      sky: ["#1f3a66", "#9fc3e6"], far: "#b9cbe3", farShape: "peaks",
+      hills: "#d5e2f0", ground: "#4d5d72", surface: "#f7fbff", cloud: "#dfe9f5",
+      celestial: "none", stars: true, landmark: "aurora",
+      props: ["pine", "pine", "pine", "snowman", "rock"], propDensity: 0.55, detail: "snow", weather: "snow",
+    },
+    {
+      name: "Volcano", from: 1800, grip: 1.05,
+      sky: ["#2a0f12", "#d4552a"], far: "#3e1a1c", farShape: "peaks",
+      hills: "#55261f", ground: "#241615", surface: "#4e3d39", cloud: "#5b4646",
+      celestial: "none", stars: false, landmark: "volcano",
+      props: ["lavaRock", "lavaRock", "deadTree", "rock"], propDensity: 0.4, detail: "ash", weather: "embers",
+    },
+    {
+      name: "Dusk", from: 2600, grip: 1,
+      sky: ["#171338", "#c96a86"], far: "#3a2a5c", farShape: "peaks",
+      hills: "#4a3565", ground: "#211637", surface: "#9b6fd1", cloud: "#b88bb4",
+      celestial: "moon", stars: true, landmark: "none",
+      props: ["crystal", "mushroom", "mushroom", "crystal"], propDensity: 0.5, detail: "moss", weather: "fireflies",
+    },
   ],
 };
 

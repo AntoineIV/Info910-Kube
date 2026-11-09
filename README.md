@@ -69,43 +69,68 @@ Une partie se résume donc à **une graine et une liste de changements de touche
 
 ```mermaid
 flowchart LR
-  user(["Navigateur"])
+  user(["Navigateur"]):::ext -->|HTTP| ing
 
   subgraph ns["namespace talus"]
     direction LR
-    ing{{"Ingress nginx<br/>talus.local"}}
+    ing{{"Ingress nginx<br/><b>talus.local</b>"}}:::net
 
-    subgraph front["Sans état (Deployments)"]
+    subgraph front["Front et API"]
       direction TB
-      svcweb["Service web"] --> web["web ×2<br/>nginx + React"]
-      svcapi["Service api"] --> api["api ×2<br/>Hono"]
-      ver["verifier ×2<br/>rejoue les parties<br/>(aucun Service)"]
+      svcweb["Service <b>web</b><br/>ClusterIP :80"]:::net --> web["Deployment <b>web</b><br/>2 pods · nginx :8080"]:::app
+      svcapi["Service <b>api</b><br/>ClusterIP :80"]:::net --> api["Deployment <b>api</b><br/>2 pods · Hono :3000"]:::app
+      cmgame[/"ConfigMap <b>game-config</b><br/>monté en fichier, rechargé à chaud"/]:::cfg -.->|volume| api
     end
 
-    cm[/"ConfigMap game-config<br/>(fichier, rechargé à chaud)"/]
-    sec[/"Secrets<br/>db-credentials, api-session"/]
-
-    subgraph data["Données"]
+    subgraph worker["Anti-triche"]
       direction TB
-      svcpg["Service headless postgres"] --> pg[("StatefulSet postgres-0")]
-      pg --- pvcdb[("PVC data-postgres-0")]
-      bak["backup<br/>pg_dump toutes les 2 min"] --> pvcbak[("PVC backups")]
-      pvcbak --- pv[("PV talus-backups<br/>Retain")]
+      ver["Deployment <b>verifier</b><br/>2 pods · aucun Service"]:::app --- hb[("emptyDir<br/>heartbeat")]:::store
+    end
+
+    subgraph data["Base de données"]
+      direction TB
+      svcpg["Service <b>postgres</b><br/>headless"]:::net --> pg["StatefulSet <b>postgres</b><br/>pod postgres-0"]:::app --- pvcdb[("PVC <b>data-postgres-0</b><br/>1 Gi · StorageClass standard")]:::store
+    end
+
+    subgraph save["Sauvegardes"]
+      direction TB
+      bak["Deployment <b>backup</b><br/>1 pod · pg_dump toutes les 2 min"]:::app --- pvcbak[("PVC <b>backups</b><br/>2 Gi")]:::store --- pv[("PV <b>talus-backups</b><br/>hostPath · Retain")]:::store
     end
   end
 
-  user -->|HTTP| ing
-  ing -->|"/"| svcweb
-  ing -->|"/api"| svcapi
-  api --> svcpg
-  ver --> svcpg
-  bak --> svcpg
-  cm -.-> api
-  sec -.-> api
-  sec -.-> pg
+  ing -->|"chemin /"| svcweb
+  ing -->|"chemin /api"| svcapi
+  api -->|"SQL"| svcpg
+  ver -->|"SQL"| svcpg
+  bak -->|"SQL"| svcpg
+
+  classDef ext fill:#334155,stroke:#334155,color:#FFFFFF
+  classDef net fill:#EFF6FF,stroke:#2563EB,color:#1E3A8A
+  classDef app fill:#FFFFFF,stroke:#334155,color:#0F172A
+  classDef store fill:#ECFDF5,stroke:#047857,color:#064E3B
+  classDef cfg fill:#FFFBEB,stroke:#B45309,color:#78350F
+  style ns fill:transparent,stroke:#64748B,stroke-width:2px
+  style front fill:transparent,stroke:#94A3B8,stroke-dasharray:4 4
+  style worker fill:transparent,stroke:#94A3B8,stroke-dasharray:4 4
+  style data fill:transparent,stroke:#94A3B8,stroke-dasharray:4 4
+  style save fill:transparent,stroke:#94A3B8,stroke-dasharray:4 4
+  linkStyle default stroke:#64748B,stroke-width:1.5px
 ```
 
-Flèches pleines : trafic réseau et accès aux volumes. Flèches pointillées : configuration injectée dans les pods. Le verifier et le backup utilisent eux aussi les Secrets, ce qui n'est pas dessiné pour garder le schéma lisible.
+**Légende** : en bleu, l'exposition réseau (Ingress, Services) ; en blanc, les charges de travail (Deployments, StatefulSet) ; en vert, le stockage (volumes, PVC, PV) ; en jaune, la configuration. Flèches pleines : trafic réseau. Traits sans flèche : volumes attachés. Pointillés : configuration montée dans les pods.
+
+Pour garder le schéma lisible, il ne montre que la ConfigMap du jeu. Le tableau ci-dessous donne la configuration reçue par chaque composant :
+
+| Injecté dans les pods | web | api | verifier | backup | postgres |
+|---|:-:|:-:|:-:|:-:|:-:|
+| ConfigMap `game-config` (fichier `/etc/talus/game.json`) | | ✓ | | | |
+| ConfigMap `platform` (variables d'environnement) | | ✓ | ✓ | ✓ | ✓ |
+| ConfigMap `backup-script` (fichier exécutable) | | | | ✓ | |
+| Secret `db-credentials` (variables d'environnement) | | ✓ | ✓ | ✓ | ✓ |
+| Secret `api-session` (variable d'environnement) | | ✓ | | | |
+| Downward API `POD_NAME` | | ✓ | ✓ | | |
+
+Le verifier ne monte pas `game-config` : il relit dans la base la configuration enregistrée par l'API au début de chaque partie, retrouvée par son hash. Le pod `web` ne reçoit aucune configuration : le navigateur obtient celle du jeu en appelant `/api/config`.
 
 ### Les conteneurs
 

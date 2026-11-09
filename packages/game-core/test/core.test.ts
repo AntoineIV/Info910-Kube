@@ -83,3 +83,15 @@ describe("kubernetes game-config ConfigMap", () => {
     expect(config).toEqual(defaultConfig);
   });
 });
+
+describe("post-crash coasting", () => {
+  it("keeps moving the wreck without changing the result", () => {
+    const sim = new Sim(9, defaultConfig, NO_UPGRADES);
+    while (!sim.finished && sim.tick < 120 * 120) sim.step(INPUT_GAS);
+    const before = { distance: sim.distance, coins: sim.coins, tick: sim.tick, reason: sim.reason };
+    const x = sim.chassis.x;
+    for (let i = 0; i < 240; i++) sim.coast();
+    expect({ distance: sim.distance, coins: sim.coins, tick: sim.tick, reason: sim.reason }).toEqual(before);
+    expect(sim.chassis.x).not.toBe(x);
+  });
+});

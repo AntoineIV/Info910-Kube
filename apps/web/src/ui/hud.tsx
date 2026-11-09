@@ -52,7 +52,7 @@ export function EndCard() {
   const run = useStore((s) => s.lastRun);
   if (!run) return null;
   return (
-    <div className="endcard">
+    <div className={`endcard ${run.crashed ? "late" : ""}`}>
       <div className="reason">{run.reason}</div>
       <div className="score">{run.distance} m · ◉ {run.coins}</div>
       <div className={`status ${run.status}`}>

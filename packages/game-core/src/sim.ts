@@ -145,7 +145,14 @@ export class Sim {
     if (this.tick >= MAX_TICKS) this.end("timeout");
   }
 
+  coast(): void {
+    if (!this.finished) return;
+    const biomeGrip = biomeAt(this.config, this.chassis.x).grip;
+    for (let i = 0; i < SUBSTEPS; i++) this.substep(false, false, 0, biomeGrip);
+  }
+
   private end(reason: EndReason): void {
+    if (this.finished) return;
     this.finished = true;
     this.reason = reason;
   }

@@ -24,6 +24,7 @@ export class Runner {
   private starting = false;
   private finishedHandled = false;
   private prev: Snapshot | null = null;
+  private coastTicks = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
@@ -87,6 +88,7 @@ export class Runner {
       this.sim = new Sim(seed, config, ticket?.upgrades ?? store.user?.upgrades ?? NO_UPGRADES);
       this.recorder = new InputRecorder();
       this.finishedHandled = false;
+      this.coastTicks = 0;
       this.acc = 0;
       const jump = import.meta.env.DEV ? Number(new URLSearchParams(location.search).get("x")) : 0;
       if (jump > 0) this.teleport(jump);
@@ -126,9 +128,20 @@ export class Runner {
         sim.step(m);
         this.acc -= STEP;
       }
+    } else if (!paused && sim.reason === "crash" && this.coastTicks < TICK_RATE * 6) {
+      this.acc += dt * this.renderer.timeScale(now / 1000);
+      while (this.acc >= STEP) {
+        this.prev = snapshot(sim);
+        sim.coast();
+        this.coastTicks++;
+        this.acc -= STEP;
+      }
     }
-    if (sim.finished && !this.finishedHandled) this.finish(sim.reason ?? "crash");
-    const alpha = sim.finished ? 1 : Math.min(1, this.acc / STEP);
+    if (sim.finished && !this.finishedHandled) {
+      if (sim.reason === "crash") this.renderer.onCrash(sim, now / 1000);
+      this.finish(sim.reason ?? "crash");
+    }
+    const alpha = Math.min(1, this.acc / STEP);
     this.renderer.draw(sim, this.prev ?? snapshot(sim), alpha, now / 1000, dt);
     const hud = useStore.getState().hud;
     const fuel = sim.fuel / sim.fuelCapacity;
@@ -143,7 +156,7 @@ export class Runner {
     if (!sim || this.finishedHandled) return;
     this.finishedHandled = true;
     const store = useStore.getState();
-    const base: LastRun = { distance: sim.distance, coins: sim.coins, reason: REASONS[reason] ?? reason, status: "guest" };
+    const base: LastRun = { distance: sim.distance, coins: sim.coins, reason: REASONS[reason] ?? reason, status: "guest", crashed: reason === "crash" };
     const ticket = this.ticket;
     if (!ticket || !store.user) {
       store.setLastRun(base);

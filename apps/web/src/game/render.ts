@@ -34,6 +34,19 @@ function interpolate(a: Snapshot, b: Snapshot, t: number): Snapshot {
 }
 
 const PROP_SPACING = 5;
+const CRASH_WORDS = ["BONK!", "OUCH!", "OOF!", "CRUNCH!", "YIKES!"];
+
+interface Crash {
+  t0: number;
+  x: number;
+  y: number;
+  word: string;
+  helmet: { x: number; y: number; vx: number; vy: number; a: number; va: number };
+}
+
+function headOf(ch: Snapshot): [number, number] {
+  return [ch.x + HEAD[0] * ch.c - HEAD[1] * ch.s, ch.y + HEAD[0] * ch.s + HEAD[1] * ch.c];
+}
 const DUST: Record<Biome["detail"], string> = { grass: "#8a6a45", sand: "#f3d9a4", snow: "#ffffff", ash: "#6b5a55", moss: "#b89be0" };
 
 export class Renderer {
@@ -43,6 +56,7 @@ export class Renderer {
   private camVx = 0;
   private readonly particles = new Particles();
   private lastSim: Sim | null = null;
+  private crash: Crash | null = null;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext("2d")!;
@@ -58,17 +72,52 @@ export class Renderer {
     }
   }
 
+  onCrash(sim: Sim, time: number) {
+    const ch = snapshot(sim);
+    const [hx, hy] = headOf(ch);
+    const biome = biomeOf(sim.config.biomes, ch.x);
+    this.crash = {
+      t0: time,
+      x: hx,
+      y: hy,
+      word: CRASH_WORDS[Math.floor(Math.random() * CRASH_WORDS.length)],
+      helmet: { x: hx, y: hy + 0.1, vx: sim.chassis.vx * 0.5 + 2 + Math.random() * 2, vy: 6 + Math.random() * 2, a: 0, va: 8 + Math.random() * 6 },
+    };
+    for (let i = 0; i < 28; i++) {
+      const a = Math.random() * Math.PI;
+      const v = 2 + Math.random() * 5;
+      this.particles.emit({ x: hx, y: hy - 0.2, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0, max: 0.6 + Math.random() * 0.8, size: 0.1 + Math.random() * 0.18, color: DUST[biome.detail] });
+    }
+    for (let i = 0; i < 16; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const v = 3 + Math.random() * 6;
+      this.particles.emit({ x: hx, y: hy, vx: Math.cos(a) * v, vy: Math.sin(a) * v + 2, life: 0, max: 0.35 + Math.random() * 0.35, size: 0.06 + Math.random() * 0.06, color: "#fff3a0" });
+    }
+  }
+
+  timeScale(time: number): number {
+    if (!this.crash) return 1;
+    const age = time - this.crash.t0;
+    return age < 0.9 ? 0.3 : age < 1.5 ? 0.3 + (age - 0.9) / 0.6 * 0.7 : 1;
+  }
+
   draw(sim: Sim, prev: Snapshot, alpha: number, time: number, dt: number) {
     this.resize();
     if (this.lastSim !== sim) {
       this.particles.clear();
+      this.crash = null;
       this.lastSim = sim;
     }
+    const crashAge = this.crash ? time - this.crash.t0 : -1;
     const { ctx, canvas } = this;
     const W = canvas.width;
     const H = canvas.height;
-    const scale = H / 15;
+    const zoom = crashAge >= 0 ? 1 + 0.22 * Math.min(1, crashAge / 0.7) * (2 - Math.min(1, crashAge / 0.7)) : 1;
+    const scale = (H / 15) * zoom;
     const ch = interpolate(prev, snapshot(sim), alpha);
+    const shake = crashAge >= 0 && crashAge < 0.6 ? (0.6 - crashAge) * H * 0.04 : 0;
+    ctx.save();
+    if (shake > 0) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
     const reset = sim.tick < 2 || dt === 0;
     this.camVx = reset ? ch.vx : this.camVx + (ch.vx - this.camVx) * (1 - Math.exp(-dt * 1.5));
     const targetX = ch.x + 5 + Math.max(-3, Math.min(6, this.camVx * 0.25));
@@ -173,10 +222,25 @@ export class Renderer {
 
     const dark = luminance(pal.skyTop) < 0.25;
     if (dark) this.drawHeadlight(ch, sx, sy, scale);
-    this.drawVehicle(ch, sx, sy, scale);
+    this.drawVehicle(ch, sx, sy, scale, this.crash !== null);
+    if (this.crash) this.drawCrash(sim, ch, sx, sy, scale, time, dt);
 
     drawWeather(ctx, W, H, cur.weather, this.camX, this.camY, time, 1 - blend);
     if (next && blend > 0) drawWeather(ctx, W, H, next.weather, this.camX, this.camY, time, blend);
+
+    ctx.restore();
+    if (crashAge >= 0 && crashAge < 0.25) {
+      ctx.fillStyle = `rgba(255,255,255,${0.55 * (1 - crashAge / 0.25)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+    if (crashAge >= 0) {
+      const k = Math.min(1, crashAge / 0.5) * 0.35;
+      const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.9);
+      v.addColorStop(0, "rgba(0,0,0,0)");
+      v.addColorStop(1, `rgba(60,0,0,${k})`);
+      ctx.fillStyle = v;
+      ctx.fillRect(0, 0, W, H);
+    }
 
     if (dark) {
       const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.95);
@@ -185,6 +249,81 @@ export class Renderer {
       ctx.fillStyle = v;
       ctx.fillRect(0, 0, W, H);
     }
+  }
+
+  private drawCrash(sim: Sim, ch: Snapshot, sx: (x: number) => number, sy: (y: number) => number, m: number, time: number, dt: number) {
+    const { ctx } = this;
+    const crash = this.crash!;
+    const age = time - crash.t0;
+    const slow = this.timeScale(time);
+
+    const hm = crash.helmet;
+    const step = dt * slow;
+    hm.vy -= 9.81 * step;
+    hm.x += hm.vx * step;
+    hm.y += hm.vy * step;
+    hm.a += hm.va * step;
+    const ground = sim.terrain.sample(hm.x).h + 0.22;
+    if (hm.y < ground) {
+      hm.y = ground;
+      hm.vy = Math.abs(hm.vy) > 1 ? -hm.vy * 0.45 : 0;
+      hm.vx *= 0.7;
+      hm.va *= 0.6;
+    }
+    ctx.save();
+    ctx.translate(sx(hm.x), sy(hm.y));
+    ctx.rotate(-hm.a);
+    ctx.fillStyle = "#1d3557";
+    ctx.beginPath();
+    ctx.arc(0, 0, HEAD_RADIUS * m * 1.08, Math.PI, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(180,220,255,0.85)";
+    ctx.fillRect(0, -0.03 * m, HEAD_RADIUS * m * 1.08, 0.1 * m);
+    ctx.restore();
+
+    if (age < 1.4) {
+      const pop = Math.min(1, age / 0.15);
+      const fade = age > 1 ? 1 - (age - 1) / 0.4 : 1;
+      const size = m * (0.9 + 0.5 * pop - 0.25 * Math.max(0, pop - 0.8));
+      ctx.save();
+      ctx.globalAlpha = fade;
+      ctx.translate(sx(crash.x), sy(crash.y + 1.6 + age * 0.6));
+      ctx.rotate(-0.12);
+      ctx.font = `900 ${Math.round(size)}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = m * 0.18;
+      ctx.strokeStyle = "#1d2a3a";
+      ctx.strokeText(crash.word, 0, 0);
+      ctx.fillStyle = "#ffd166";
+      ctx.fillText(crash.word, 0, 0);
+      ctx.restore();
+    }
+
+    if (age > 0.5) {
+      const [hx, hy] = headOf(ch);
+      const show = Math.min(1, (age - 0.5) / 0.3);
+      for (let i = 0; i < 3; i++) {
+        const a = time * 4 + (i * Math.PI * 2) / 3;
+        const px = sx(hx + Math.cos(a) * 0.45);
+        const py = sy(hy + 0.35 + Math.sin(a) * 0.15);
+        this.star(px, py, m * 0.13 * show, a);
+      }
+    }
+  }
+
+  private star(x: number, y: number, r: number, rot: number) {
+    const { ctx } = this;
+    ctx.fillStyle = "#ffe066";
+    ctx.beginPath();
+    for (let k = 0; k < 10; k++) {
+      const rr = k % 2 === 0 ? r : r * 0.45;
+      const a = rot + (k * Math.PI) / 5;
+      if (k === 0) ctx.moveTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+      else ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+    }
+    ctx.closePath();
+    ctx.fill();
   }
 
   private drawSurfaceDetail(sim: Sim, left: number, right: number, sx: (x: number) => number, sy: (y: number) => number, m: number, time: number) {
@@ -362,7 +501,7 @@ export class Renderer {
     ctx.restore();
   }
 
-  private drawVehicle(ch: Snapshot, sx: (x: number) => number, sy: (y: number) => number, m: number) {
+  private drawVehicle(ch: Snapshot, sx: (x: number) => number, sy: (y: number) => number, m: number, crashed: boolean) {
     const { ctx } = this;
     const angle = Math.atan2(ch.s, ch.c);
 
@@ -408,12 +547,30 @@ export class Renderer {
     ctx.beginPath();
     ctx.arc(HEAD[0] * m, -HEAD[1] * m, HEAD_RADIUS * m, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = "#1d3557";
-    ctx.beginPath();
-    ctx.arc(HEAD[0] * m, -HEAD[1] * m, HEAD_RADIUS * m * 1.05, Math.PI, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "rgba(180,220,255,0.85)";
-    ctx.fillRect(HEAD[0] * m, -HEAD[1] * m - 0.02 * m, HEAD_RADIUS * m * 1.05, 0.1 * m);
+    if (crashed) {
+      ctx.fillStyle = "#6b3e26";
+      ctx.beginPath();
+      ctx.arc(HEAD[0] * m, -HEAD[1] * m - HEAD_RADIUS * m * 0.35, HEAD_RADIUS * m * 0.75, Math.PI * 1.05, Math.PI * 1.95);
+      ctx.fill();
+      ctx.strokeStyle = "#1d2a3a";
+      ctx.lineWidth = m * 0.04;
+      const ex = HEAD[0] * m + HEAD_RADIUS * m * 0.4;
+      const ey = -HEAD[1] * m - HEAD_RADIUS * m * 0.1;
+      const e = HEAD_RADIUS * m * 0.18;
+      ctx.beginPath();
+      ctx.moveTo(ex - e, ey - e);
+      ctx.lineTo(ex + e, ey + e);
+      ctx.moveTo(ex + e, ey - e);
+      ctx.lineTo(ex - e, ey + e);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = "#1d3557";
+      ctx.beginPath();
+      ctx.arc(HEAD[0] * m, -HEAD[1] * m, HEAD_RADIUS * m * 1.05, Math.PI, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(180,220,255,0.85)";
+      ctx.fillRect(HEAD[0] * m, -HEAD[1] * m - 0.02 * m, HEAD_RADIUS * m * 1.05, 0.1 * m);
+    }
     ctx.restore();
 
     for (const wh of ch.wheels) {

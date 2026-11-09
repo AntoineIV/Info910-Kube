@@ -10,6 +10,7 @@ export interface LastRun {
   reason: string;
   status: "guest" | "offline" | "pending" | "verified" | "rejected";
   verifiedBy?: string | null;
+  crashed?: boolean;
 }
 
 interface Hud {

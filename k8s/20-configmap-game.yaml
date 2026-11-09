@@ -22,7 +22,9 @@ data:
         "maxWheelSpeed": 42,
         "brakeTorque": 600,
         "reverseTorque": 220,
-        "airTorque": 2600,
+        "airSpinSpeed": 3.4,
+        "airResponse": 5,
+        "airDamping": 3.5,
         "grip": 1.1,
         "suspensionStiffness": 6500,
         "suspensionDamping": 520

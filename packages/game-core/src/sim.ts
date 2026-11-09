@@ -124,7 +124,8 @@ export class Sim {
     const ch = this.chassis;
     this.terrain.ensure(ch.x + 60);
     const biomeGrip = biomeAt(this.config, ch.x).grip;
-    for (let i = 0; i < SUBSTEPS; i++) this.substep(gas, brake, biomeGrip);
+    const air = (input & INPUT_GAS ? 1 : 0) - (input & INPUT_BRAKE ? 1 : 0);
+    for (let i = 0; i < SUBSTEPS; i++) this.substep(gas, brake, air, biomeGrip);
     if (this.finished) return;
     this.tick++;
     if (ch.x > this.maxX) this.maxX = ch.x;
@@ -171,7 +172,7 @@ export class Sim {
     return dx * dx + dy * dy < PICKUP_RADIUS_SQ;
   }
 
-  private substep(gas: boolean, brake: boolean, biomeGrip: number): void {
+  private substep(gas: boolean, brake: boolean, air: number, biomeGrip: number): void {
     const ch = this.chassis;
     const p = this.config.physics;
     const g = p.gravity;
@@ -296,15 +297,15 @@ export class Sim {
       ctq += rx * fy - ry * fx;
     }
 
-    if (!grounded) {
-      if (gas) ctq += p.airTorque;
-      else if (brake) ctq -= p.airTorque;
-    }
-
     ch.vx += (cfx / CHASSIS_MASS) * DT;
     ch.vy += (cfy / CHASSIS_MASS) * DT;
     ch.w += (ctq / CHASSIS_INERTIA) * DT;
     ch.w -= ch.w * 0.4 * DT;
+    if (!grounded) {
+      const target = air * p.airSpinSpeed;
+      const rate = air === 0 ? p.airDamping : p.airResponse;
+      ch.w += (target - ch.w) * rate * DT;
+    }
     if (ch.w > MAX_SPIN) ch.w = MAX_SPIN;
     if (ch.w < -MAX_SPIN) ch.w = -MAX_SPIN;
 

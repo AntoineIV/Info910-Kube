@@ -224,17 +224,20 @@ echo "$(minikube ip) talus.local" | sudo tee -a /etc/hosts
 Il ne reste qu'à ouvrir <http://talus.local>.
 
 Ce que fait `scripts/deploy.sh` :
-1. `minikube addons enable ingress` : installe le contrôleur d'Ingress nginx.
+1. `minikube addons enable ingress` : installe le contrôleur d'Ingress nginx, puis attend qu'il soit prêt.
 2. `kubectl apply -f k8s/00-namespace.yaml` : le namespace doit exister avant les objets qu'il contient.
-3. `kubectl apply -f k8s/` : applique les manifestes dans l'ordre de leur numéro (Secrets, ConfigMaps, base, API, verifier, web, sauvegardes, Ingress).
+3. `kubectl apply -f k8s/` : applique les manifestes dans l'ordre de leur numéro (Secrets, ConfigMaps, base, API, verifier, web, sauvegardes, Ingress). La commande est relancée quelques fois si le contrôleur d'Ingress refuse encore les connexions.
 4. Attend que le StatefulSet puis chaque Deployment soient prêts (`kubectl rollout status`), puis affiche les pods, Services, Ingress et PVC.
 
 Sans le script, les manifestes s'appliquent à la main :
 
 ```bash
 minikube addons enable ingress
+kubectl -n ingress-nginx wait --for=condition=Ready pod -l app.kubernetes.io/component=controller --timeout=300s
 kubectl apply -f k8s/00-namespace.yaml && kubectl apply -f k8s/
 ```
+
+Sur un cluster neuf, l'attente est indispensable : tant que le contrôleur d'Ingress n'est pas prêt, la création de l'Ingress est refusée (`failed calling webhook "validate.nginx.ingress.kubernetes.io"`). Si l'erreur apparaît quand même, il suffit de relancer la dernière commande.
 
 ### Vérifier que tout fonctionne
 

@@ -73,10 +73,9 @@ export function KeyGuide() {
   );
 }
 
-type HintId = "start" | "air" | "rear" | "fuel";
+type HintId = "start" | "rear" | "fuel";
 const HINTS: Record<HintId, { text: string; tone: "info" | "warn" }> = {
   start: { text: "Hold → to drive", tone: "info" },
-  air: { text: "In the air: ← and → rotate the car. Land on your wheels!", tone: "info" },
   rear: { text: "Too steep! Release → or tap ← to bring the nose down", tone: "warn" },
   fuel: { text: "Low fuel! Grab the next fuel can", tone: "warn" },
 };
@@ -87,7 +86,6 @@ export function Hints() {
   const lastRun = useStore((s) => s.lastRun);
   const [tutorialRuns] = useState(() => Number(localStorage.getItem(SEEN_KEY) ?? 0));
   const counted = useRef(false);
-  const [airShown, setAirShown] = useState(0);
 
   useEffect(() => {
     if (hud.started && !counted.current) {
@@ -96,16 +94,11 @@ export function Hints() {
     }
   }, [hud.started, tutorialRuns]);
 
-  useEffect(() => {
-    if (hud.airborne && hud.started && airShown < 3) setAirShown((n) => n + 1);
-  }, [hud.airborne, hud.started]);
-
   if (screen !== "playing" || lastRun) return null;
   const learning = tutorialRuns < 4;
   let hint: HintId | null = null;
   if (!hud.started) hint = "start";
   else if (hud.rearing && learning) hint = "rear";
-  else if (hud.airborne && learning && airShown <= 3) hint = "air";
   else if (hud.fuel < 0.25 && hud.fuel > 0) hint = "fuel";
   if (!hint) return null;
   const { text, tone } = HINTS[hint];

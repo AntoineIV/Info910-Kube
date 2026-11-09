@@ -76,7 +76,7 @@ export class Runner {
     try {
       if (this.sim && !this.sim.finished && this.sim.tick > TICK_RATE) this.finish("abandoned");
       const store = useStore.getState();
-      let ticket = store.user ? await (this.nextTicket ?? this.fetchTicket()) : null;
+      let ticket = store.user ? ((await this.nextTicket) ?? (await this.fetchTicket())) : null;
       this.nextTicket = this.fetchTicket();
       if (ticket && ticket.configHash !== useStore.getState().configHash) await useStore.getState().loadConfig();
       if (ticket && ticket.configHash !== useStore.getState().configHash) ticket = null;

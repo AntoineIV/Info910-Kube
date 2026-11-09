@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { gameConfigs, type Db } from "@talus/db";
+import { z } from "zod";
 import { defaultConfig, parseGameConfig, type GameConfig } from "@talus/game-core";
 
 export interface LoadedConfig {
@@ -33,7 +34,7 @@ export class ConfigStore {
       this.lastRaw = raw;
       if (changed) console.log(`[config] active game config ${hash} (gravity=${config.physics.gravity})`);
     } catch (err) {
-      this.lastError = err instanceof Error ? err.message : String(err);
+      this.lastError = err instanceof z.ZodError ? z.prettifyError(err).replace(/\n/g, " ") : err instanceof Error ? err.message : String(err);
       this.lastRaw = raw;
       console.error(`[config] rejected config file, keeping ${this.current?.hash ?? "none"}: ${this.lastError}`);
       if (!this.current) throw err;

@@ -192,6 +192,13 @@ export function createApp({ db, configs, sessionSecret, podName }: AppDeps) {
     return c.json(await profile(userId));
   });
 
+  api.onError((err, c) => {
+    const detail = `${err.message} ${err.cause instanceof Error ? err.cause.message : ""}`;
+    const unavailable = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|timeout|terminat|Connection/i.test(detail);
+    console.error(`[api] ${c.req.method} ${c.req.path} failed: ${detail.split("\n")[0]}`);
+    return c.json({ error: unavailable ? "service_unavailable" : "internal_error" }, unavailable ? 503 : 500);
+  });
+
   const app = new Hono();
   app.route("/api", api);
   return app;

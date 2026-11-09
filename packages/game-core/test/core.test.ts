@@ -73,3 +73,13 @@ describe("simulation", () => {
     expect(result.distance === sim.distance && result.coins === sim.coins).toBe(false);
   });
 });
+
+describe("kubernetes game-config ConfigMap", () => {
+  it("ships a valid config equal to the code defaults", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { parse } = await import("yaml");
+    const manifest = parse(readFileSync(new URL("../../../k8s/20-configmap-game.yaml", import.meta.url), "utf8"));
+    const config = parseGameConfig(JSON.parse(manifest.data["game.json"]));
+    expect(config).toEqual(defaultConfig);
+  });
+});

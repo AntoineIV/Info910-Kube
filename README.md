@@ -23,7 +23,7 @@ Côté Kubernetes, l'originalité tient en quatre points :
 7. [Démonstrations reproductibles](#7-démonstrations-reproductibles)
 8. [Commandes utiles pour observer le cluster](#8-commandes-utiles-pour-observer-le-cluster)
 9. [Développement local (sans Kubernetes)](#9-développement-local-sans-kubernetes)
-10. [Ce qui a été vérifié et ce qui reste à vérifier](#10-ce-qui-a-été-vérifié-et-ce-qui-reste-à-vérifier)
+10. [Conclusion](#10-conclusion)
 
 ---
 
@@ -67,20 +67,45 @@ Une partie se résume donc à **une graine et une liste de changements de touche
 
 ## 2. Architecture
 
+```mermaid
+flowchart LR
+  user(["Navigateur"])
+
+  subgraph ns["namespace talus"]
+    direction LR
+    ing{{"Ingress nginx<br/>talus.local"}}
+
+    subgraph front["Sans état (Deployments)"]
+      direction TB
+      svcweb["Service web"] --> web["web ×2<br/>nginx + React"]
+      svcapi["Service api"] --> api["api ×2<br/>Hono"]
+      ver["verifier ×2<br/>rejoue les parties<br/>(aucun Service)"]
+    end
+
+    cm[/"ConfigMap game-config<br/>(fichier, rechargé à chaud)"/]
+    sec[/"Secrets<br/>db-credentials, api-session"/]
+
+    subgraph data["Données"]
+      direction TB
+      svcpg["Service headless postgres"] --> pg[("StatefulSet postgres-0")]
+      pg --- pvcdb[("PVC data-postgres-0")]
+      bak["backup<br/>pg_dump toutes les 2 min"] --> pvcbak[("PVC backups")]
+      pvcbak --- pv[("PV talus-backups<br/>Retain")]
+    end
+  end
+
+  user -->|HTTP| ing
+  ing -->|"/"| svcweb
+  ing -->|"/api"| svcapi
+  api --> svcpg
+  ver --> svcpg
+  bak --> svcpg
+  cm -.-> api
+  sec -.-> api
+  sec -.-> pg
 ```
-                     ┌──────────── namespace talus ─────────────────────────────────────┐
- navigateur ──HTTP──▶│ Ingress (nginx) talus.local                                       │
-                     │   ├─ /api ──▶ Service api ──▶ Deployment api ×2 (Hono)            │
-                     │   └─ /    ──▶ Service web ──▶ Deployment web ×2 (nginx, React)    │
-                     │                                   │  ConfigMap game-config (fichier)│
-                     │   Deployment verifier ×2 ─────────┤                                │
-                     │   (rejoue les parties)            ▼                                │
-                     │                     Service headless postgres                      │
-                     │                     StatefulSet postgres (PVC data-postgres-0)     │
-                     │                                   ▲                                │
-                     │   Deployment backup (pg_dump en boucle) ──▶ PVC backups ──▶ PV Retain│
-                     └───────────────────────────────────────────────────────────────────┘
-```
+
+Flèches pleines : trafic réseau et accès aux volumes. Flèches pointillées : configuration injectée dans les pods. Le verifier et le backup utilisent eux aussi les Secrets, ce qui n'est pas dessiné pour garder le schéma lisible.
 
 ### Les conteneurs
 
@@ -376,23 +401,17 @@ pnpm --filter @talus/verifier build && DATABASE_PORT=55432 node apps/verifier/di
 pnpm --filter @talus/web dev               # http://localhost:5173 (proxy /api vers :3000)
 ```
 
-## 10. Ce qui a été vérifié et ce qui reste à vérifier
+## 10. Conclusion
 
-**Exécuté** pendant le développement, sur minikube v1.39 (Kubernetes 1.37, runtime containerd, driver docker, Linux) :
-- Tests unitaires `game-core` (9 tests) : déterminisme, rejeu identique, détection d'entrées falsifiées, pente du terrain plafonnée, ConfigMap identique aux valeurs du code, effets visuels sans influence sur le résultat.
-- Déploiement par `scripts/build-images.sh` et `scripts/deploy.sh` : tous les pods passent `Running/Ready`.
-- Les 4 démonstrations ci-dessus.
-- Parcours complet dans Chromium (headless, via l'Ingress), relancé après chaque modification du jeu : création de compte depuis le menu, partie jusqu'à la fin, partie **Verified** par un pod verifier.
-- Achat d'amélioration via l'API : refus si les pièces manquent, achat réussi, puis partie avec le moteur amélioré **Verified**.
+Talus montre qu'une application classique (un front, une API, une base) devient plus intéressante à déployer dès qu'on lui donne des besoins réels d'infrastructure :
+- **Séparer les rôles** : l'API répond aux joueurs, le verifier rejoue les parties. Ce sont deux Deployments indépendants, qu'on met à l'échelle séparément, et le verifier n'a même pas besoin de Service.
+- **Configurer sans reconstruire** : toute la physique, la difficulté, l'économie et l'habillage du jeu tiennent dans une ConfigMap, rechargée à chaud et validée. Chaque configuration est conservée en base, pour que l'anti-triche reste juste quand on change les réglages en cours de route.
+- **Faire dire quelque chose de précis aux sondes** : une panne de base retire l'API du trafic sans la redémarrer, une boucle de verifier bloquée est redémarrée, et des sauvegardes qui s'arrêtent se voient dans le compteur de redémarrages.
+- **Ne pas perdre les données** : le StatefulSet garde son volume quand son pod est recréé, et les sauvegardes vivent sur un volume persistant séparé, conservé même si la base et son PVC disparaissent.
 
-**À vérifier à la main** :
-- Un **déploiement depuis zéro** en suivant ce README à la lettre (nouveau clone, `minikube delete`, puis la section 4). Jusqu'ici, le cluster a été redéployé par-dessus une installation existante.
-- Le **ressenti du jeu** : difficulté, physique, lisibilité. Les parties de test étaient automatisées (bot et Chromium headless).
-- Le jeu dans **Firefox** : le déterminisme entre Firefox (SpiderMonkey) et Node (V8) repose sur l'arithmétique IEEE 754, mais aucune partie jouée dans Firefox n'a encore été vérifiée.
-- L'achat d'une amélioration **par un clic** dans le Garage (testé seulement via l'API).
-- La persistance de `/data/talus-backups` après `minikube stop && minikube start`.
+Les quatre démonstrations de la section 7 rejouent chacun de ces comportements en une commande, sur le cluster déployé.
 
-**Limites connues** :
-- Chaque relance réserve une partie côté serveur à l'avance. Les parties jamais terminées restent en statut `started`, sans nettoyage automatique.
-- Postgres tourne avec une seule réplique : pendant son redémarrage, l'API est retirée du trafic (comportement voulu et démontré, mais ce n'est pas de la haute disponibilité).
-- Le PV des sauvegardes est un `hostPath`, adapté à un cluster d'un seul nœud comme minikube. Sur un cluster de plusieurs nœuds, il faudrait un volume réseau.
+**Pistes d'amélioration**
+- Postgres tourne avec une seule réplique. Pendant son redémarrage, l'API est volontairement retirée du trafic, mais ce n'est pas de la haute disponibilité : il faudrait une réplication Postgres.
+- Le volume des sauvegardes est un `hostPath`, adapté à un cluster d'un seul nœud comme minikube. Sur un cluster de plusieurs nœuds, il faudrait un volume réseau.
+- Les parties réservées mais jamais terminées restent en statut `started`. Un nettoyage périodique serait utile.

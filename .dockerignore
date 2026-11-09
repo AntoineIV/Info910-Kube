@@ -1,0 +1,6 @@
+**/node_modules
+**/dist
+docs
+.git
+k8s
+scripts

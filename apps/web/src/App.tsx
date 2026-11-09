@@ -1,12 +1,13 @@
 import { useEffect, useRef } from "react";
 import { Runner } from "./game/runner";
 import { useStore } from "./store";
-import { AccountPanel, GaragePanel, LeaderboardPanel } from "./ui/panels";
-import { EndCard, Hud, TopBar } from "./ui/hud";
+import { EndCard, Hud } from "./ui/hud";
+import { PauseMenu, TitleScreen } from "./ui/menu";
+import { Modal } from "./ui/panels";
 
 export function App() {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const panel = useStore((s) => s.panel);
+  const screen = useStore((s) => s.screen);
 
   useEffect(() => {
     let unmount = () => {};
@@ -22,21 +23,27 @@ export function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" && e.key.toLowerCase() !== "p") return;
+      if (e.key.toLowerCase() === "p" && e.target instanceof HTMLInputElement) return;
+      const st = useStore.getState();
+      if (st.panel) st.setPanel(null);
+      else if (st.screen === "playing") st.setScreen("paused");
+      else if (st.screen === "paused") st.setScreen("playing");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
-    <div className="app">
+    <div className={`app screen-${screen}`}>
       <canvas ref={canvas} className="stage" />
-      <TopBar />
       <Hud />
       <EndCard />
-      {panel && (
-        <div className="backdrop" onClick={() => useStore.getState().setPanel(null)}>
-          <div className="panel" onClick={(e) => e.stopPropagation()}>
-            {panel === "account" && <AccountPanel />}
-            {panel === "leaderboard" && <LeaderboardPanel />}
-            {panel === "garage" && <GaragePanel />}
-          </div>
-        </div>
-      )}
+      {screen === "title" && <TitleScreen />}
+      {screen === "paused" && <PauseMenu />}
+      <Modal />
     </div>
   );
 }

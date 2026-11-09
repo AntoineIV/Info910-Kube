@@ -3,6 +3,7 @@ import { defaultConfig, type GameConfig, type UpgradeKind } from "@talus/game-co
 import { api, ApiError, onServedBy, type Profile } from "./api";
 
 export type Panel = null | "account" | "leaderboard" | "garage";
+export type Screen = "title" | "playing" | "paused";
 
 export interface LastRun {
   distance: number;
@@ -11,6 +12,7 @@ export interface LastRun {
   status: "guest" | "offline" | "pending" | "verified" | "rejected";
   verifiedBy?: string | null;
   crashed?: boolean;
+  newBest?: boolean;
 }
 
 interface Hud {
@@ -27,11 +29,15 @@ interface State {
   servedBy: string | null;
   user: Profile | null;
   panel: Panel;
+  screen: Screen;
+  busy: boolean;
+  restart: () => void;
   hud: Hud;
   lastRun: LastRun | null;
   leaderboard: { username: string; distance: number }[];
   error: string | null;
   setPanel: (panel: Panel) => void;
+  setScreen: (screen: Screen) => void;
   setHud: (hud: Hud) => void;
   setLastRun: (run: LastRun | null) => void;
   loadConfig: () => Promise<void>;
@@ -62,11 +68,15 @@ export const useStore = create<State>((set, get) => ({
   servedBy: null,
   user: null,
   panel: null,
+  screen: "title",
+  busy: false,
+  restart: () => {},
   hud: { distance: 0, coins: 0, fuel: 1, biome: defaultConfig.biomes[0].name },
   lastRun: null,
   leaderboard: [],
   error: null,
   setPanel: (panel) => set({ panel, error: null }),
+  setScreen: (screen) => set({ screen }),
   setHud: (hud) => set({ hud }),
   setLastRun: (lastRun) => set({ lastRun }),
   loadConfig: async () => {
@@ -85,11 +95,12 @@ export const useStore = create<State>((set, get) => ({
     }
   },
   authenticate: async (mode, username, password) => {
+    set({ busy: true, error: null });
     try {
       const user = mode === "login" ? await api.login(username, password) : await api.register(username, password);
-      set({ user, panel: null, error: null });
+      set({ user, panel: null, error: null, busy: false });
     } catch (err) {
-      set({ error: errorText(err) });
+      set({ error: errorText(err), busy: false });
     }
   },
   logout: async () => {
@@ -104,10 +115,11 @@ export const useStore = create<State>((set, get) => ({
     }
   },
   buy: async (kind) => {
+    set({ busy: true });
     try {
-      set({ user: await api.buy(kind), error: null });
+      set({ user: await api.buy(kind), error: null, busy: false });
     } catch (err) {
-      set({ error: errorText(err) });
+      set({ error: errorText(err), busy: false });
       void get().refreshMe();
     }
   },

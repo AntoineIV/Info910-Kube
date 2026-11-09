@@ -15,7 +15,9 @@ Talus est un jeu de conduite 2D pour navigateur : un petit véhicule roule sur u
 | `→` ou `D` | Accélérer (en l'air : pencher en arrière) |
 | `←` ou `A` | Freiner, reculer (en l'air : pencher en avant) |
 | `R`, `Espace` ou `Entrée` | Relancer instantanément |
+| `Échap` ou `P` | Menu pause (reprendre, recommencer, Garage, classement, compte) ; ferme aussi les fenêtres |
 
+- L'écran titre disparaît dès qu'on appuie sur `→` : on roule immédiatement.
 - La partie s'arrête si la tête du pilote touche le sol ou s'il n'y a plus d'essence. Le score est la distance parcourue.
 - On peut jouer tout de suite, sans compte (mode invité). Avec un compte (bouton **Sign in to save**), chaque partie est vérifiée par le serveur : la distance entre alors au **Leaderboard** et les pièces sont créditées.
 - Le **Garage** permet d'acheter avec ces pièces 4 améliorations : moteur, pneus, suspension et réservoir.

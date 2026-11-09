@@ -25,6 +25,7 @@ export class Runner {
   private finishedHandled = false;
   private prev: Snapshot | null = null;
   private coastTicks = 0;
+  private bestAtStart = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
@@ -37,9 +38,16 @@ export class Runner {
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     window.addEventListener("blur", blur);
+    useStore.setState({ restart: () => void this.restart() });
+    const unsubscribe = useStore.subscribe((state, prev) => {
+      if (state.user?.username === prev.user?.username) return;
+      this.nextTicket = null;
+      if (!this.sim || this.sim.tick === 0 || this.sim.finished || state.screen !== "playing") void this.restart();
+    });
     void this.restart();
     this.frame = requestAnimationFrame(this.loop);
     return () => {
+      unsubscribe();
       cancelAnimationFrame(this.frame);
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
@@ -48,16 +56,30 @@ export class Runner {
   }
 
   private onKey(e: KeyboardEvent, pressed: boolean) {
-    if (e.target instanceof HTMLInputElement) return;
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLButtonElement) {
+      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    }
     const key = e.key.toLowerCase();
+    const st = useStore.getState();
+    if (!pressed) {
+      this.keys.delete(key);
+      return;
+    }
+    if (st.panel) return;
     if (["arrowleft", "arrowright", "arrowup", "arrowdown", " "].includes(key)) e.preventDefault();
-    if (pressed && (key === "r" || key === " " || key === "enter") && !e.repeat) {
-      if (useStore.getState().panel) return;
+    if (st.screen !== "playing") {
+      if (st.screen === "title" && ["arrowright", "d", " ", "enter"].includes(key)) {
+        e.preventDefault();
+        st.setScreen("playing");
+        if (key === "arrowright" || key === "d") this.keys.add(key);
+      }
+      return;
+    }
+    if ((key === "r" || key === " " || key === "enter") && !e.repeat) {
       void this.restart();
       return;
     }
-    if (pressed) this.keys.add(key);
-    else this.keys.delete(key);
+    this.keys.add(key);
   }
 
   private mask(): number {
@@ -93,7 +115,9 @@ export class Runner {
       const jump = import.meta.env.DEV ? Number(new URLSearchParams(location.search).get("x")) : 0;
       if (jump > 0) this.teleport(jump);
       this.prev = snapshot(this.sim);
+      this.bestAtStart = useStore.getState().user?.best ?? 0;
       useStore.getState().setLastRun(null);
+      if (useStore.getState().screen === "paused") useStore.getState().setScreen("playing");
     } finally {
       this.starting = false;
     }
@@ -118,7 +142,9 @@ export class Runner {
     this.last = now;
     const sim = this.sim;
     if (!sim) return;
-    const paused = useStore.getState().panel !== null;
+    const st = useStore.getState();
+    const paused = st.panel !== null || st.screen !== "playing";
+    if (paused) this.keys.clear();
     if (!paused && !sim.finished) {
       this.acc += dt;
       while (this.acc >= STEP && !sim.finished) {
@@ -156,7 +182,7 @@ export class Runner {
     if (!sim || this.finishedHandled) return;
     this.finishedHandled = true;
     const store = useStore.getState();
-    const base: LastRun = { distance: sim.distance, coins: sim.coins, reason: REASONS[reason] ?? reason, status: "guest", crashed: reason === "crash" };
+    const base: LastRun = { distance: sim.distance, coins: sim.coins, reason: REASONS[reason] ?? reason, status: "guest", crashed: reason === "crash", newBest: this.bestAtStart > 0 && sim.distance > this.bestAtStart };
     const ticket = this.ticket;
     if (!ticket || !store.user) {
       store.setLastRun(base);

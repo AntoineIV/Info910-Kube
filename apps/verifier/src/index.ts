@@ -85,7 +85,8 @@ async function loop(): Promise<void> {
     try {
       worked = await verifyOne();
     } catch (err) {
-      console.error(`[verifier] ${err instanceof Error ? err.message : err}`);
+      const cause = err instanceof Error && err.cause instanceof Error ? err.cause.message : null;
+      console.error(`[verifier] database error: ${cause ?? (err instanceof Error ? err.message.split("\n")[0] : err)}`);
     }
     if (!worked) await new Promise((r) => setTimeout(r, idleMs));
   }

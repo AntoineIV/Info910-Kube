@@ -1,0 +1,21 @@
+# Non-sensitive platform settings, injected as environment variables (envFrom).
+# Unlike the game config (20-*), changing these requires a rollout restart.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform
+  namespace: talus
+  labels:
+    part-of: talus
+data:
+  # Stable DNS name of the first StatefulSet pod, resolved through the headless service.
+  DATABASE_HOST: postgres-0.postgres
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: talus
+  # How often the API re-reads the mounted game config file.
+  CONFIG_RELOAD_MS: "5000"
+  # Verifier polling interval when the queue is empty.
+  POLL_IDLE_MS: "1000"
+  # Backups: one pg_dump every BACKUP_INTERVAL_SECONDS, the BACKUP_KEEP newest are kept.
+  BACKUP_INTERVAL_SECONDS: "120"
+  BACKUP_KEEP: "10"

@@ -1,0 +1,107 @@
+# PostgreSQL as a StatefulSet: stable pod name (postgres-0), stable DNS name
+# (postgres-0.postgres.talus.svc.cluster.local) and its own PersistentVolumeClaim
+# (data-postgres-0) that is re-attached when the pod is recreated.
+# Headless service (clusterIP: None), mandatory for a StatefulSet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: talus
+  labels:
+    app: postgres
+    part-of: talus
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: talus
+  labels:
+    app: postgres
+    part-of: talus
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+        part-of: talus
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: password
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: platform
+                  key: DATABASE_NAME
+            # Subdirectory, because the volume root may contain lost+found.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          # Startup: first boot runs initdb, so give it up to 60 s before liveness kicks in.
+          startupProbe:
+            exec:
+              command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            periodSeconds: 2
+            failureThreshold: 30
+          # Readiness: accepts connections for our database (also false during recovery).
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            periodSeconds: 5
+            failureThreshold: 2
+          # Liveness: only "is the server process still listening". Deliberately lighter
+          # than readiness, so that a busy database is not killed in the middle of work.
+          livenessProbe:
+            tcpSocket:
+              port: postgres
+            periodSeconds: 10
+            failureThreshold: 3
+  # One PVC per pod, created from this template (default minikube StorageClass).
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app: postgres
+          part-of: talus
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

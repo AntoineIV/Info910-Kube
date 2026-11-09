@@ -1,0 +1,115 @@
+# Stateless HTTP API (Hono), two replicas behind a ClusterIP service.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: talus
+  labels:
+    app: api
+    part-of: talus
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+        part-of: talus
+    spec:
+      containers:
+        - name: api
+          image: talus/api:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: platform
+          env:
+            # Downward API: the pod name is sent back in the X-Served-By header and
+            # shown in the game, which makes load balancing between replicas visible.
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: DATABASE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: username
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: password
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: api-session
+                  key: SESSION_SECRET
+            - name: CONFIG_PATH
+              value: /etc/talus/game.json
+          volumeMounts:
+            # Mounted as a directory (no subPath) so that ConfigMap updates propagate.
+            - name: game-config
+              mountPath: /etc/talus
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          # Each probe answers a different question:
+          # Startup: "are migrations applied and the game config loaded?" Migrations
+          # run at boot under a Postgres advisory lock (safe with several replicas) and
+          # wait for the database, so allow up to 2 minutes before giving up.
+          startupProbe:
+            httpGet:
+              path: /healthz/startup
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          # Liveness: "is the event loop still responding?" It does NOT check the
+          # database: a database outage must not trigger a restart storm of the API.
+          livenessProbe:
+            httpGet:
+              path: /healthz/live
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # Readiness: "can I serve players right now?" (database reachable, not
+          # shutting down). On failure the pod leaves the Service endpoints, so the
+          # Ingress stops sending traffic to it, and it comes back by itself.
+          readinessProbe:
+            httpGet:
+              path: /healthz/ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+      volumes:
+        - name: game-config
+          configMap:
+            name: game-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: talus
+  labels:
+    app: api
+    part-of: talus
+spec:
+  selector:
+    app: api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

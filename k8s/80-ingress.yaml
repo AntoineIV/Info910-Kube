@@ -1,0 +1,30 @@
+# Single entry point (simple fanout): /api goes to the API, everything else to the
+# static front-end. Same origin for both, so no CORS and the session cookie just works.
+# Requires an ingress controller: minikube addons enable ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: talus
+  namespace: talus
+  labels:
+    part-of: talus
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: talus.local
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  name: http
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http

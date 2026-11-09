@@ -1,0 +1,161 @@
+# Periodic logical backups of the database onto a dedicated persistent volume.
+#
+# Storage: a statically provisioned PersistentVolume with reclaimPolicy Retain.
+# The dumps live outside the database volume and survive the deletion of the
+# PVC, of the database, and even of the whole namespace. On minikube, hostPath
+# directories under /data persist across "minikube stop/start".
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: talus-backups
+  labels:
+    usage: talus-backups
+    part-of: talus
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 2Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /data/talus-backups
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backups
+  namespace: talus
+  labels:
+    part-of: talus
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+  # Bind to the PV above only (not to a dynamically provisioned volume).
+  selector:
+    matchLabels:
+      usage: talus-backups
+---
+# The backup loop itself, mounted from a ConfigMap as an executable file.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-script
+  namespace: talus
+  labels:
+    part-of: talus
+data:
+  backup.sh: |
+    #!/bin/sh
+    set -u
+    echo "[backup] one dump every ${BACKUP_INTERVAL_SECONDS}s, keeping ${BACKUP_KEEP}"
+    while true; do
+      stamp=$(date -u +%Y%m%dT%H%M%SZ)
+      file="/backups/talus-$stamp.dump"
+      if pg_dump -Fc -f "$file.partial"; then
+        mv "$file.partial" "$file"
+        echo "[backup] wrote $(basename "$file") ($(du -h "$file" | cut -f1))"
+        ls -1t /backups/talus-*.dump | tail -n +$((BACKUP_KEEP + 1)) | xargs -r rm -f
+      else
+        rm -f "$file.partial"
+        echo "[backup] pg_dump failed, retrying at next interval"
+      fi
+      sleep "$BACKUP_INTERVAL_SECONDS"
+    done
+---
+# A long-running Deployment rather than a scheduled job: the loop interval and the
+# rotation come from the platform ConfigMap, and the probes below watch the result.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backup
+  namespace: talus
+  labels:
+    app: backup
+    part-of: talus
+spec:
+  replicas: 1
+  # ReadWriteOnce volume: never run the old and the new pod at the same time.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: backup
+  template:
+    metadata:
+      labels:
+        app: backup
+        part-of: talus
+    spec:
+      containers:
+        - name: backup
+          # Same major version as the server, so pg_dump/pg_restore are compatible.
+          image: postgres:17-alpine
+          command: ["/scripts/backup.sh"]
+          envFrom:
+            - configMapRef:
+                name: platform
+          env:
+            # Standard libpq variables read by pg_dump / pg_restore.
+            - name: PGHOST
+              valueFrom:
+                configMapKeyRef:
+                  name: platform
+                  key: DATABASE_HOST
+            - name: PGDATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: platform
+                  key: DATABASE_NAME
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: password
+          volumeMounts:
+            - name: backups
+              mountPath: /backups
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          # Startup: wait (up to 5 min) for the first successful dump.
+          startupProbe:
+            exec:
+              command: ["sh", "-c", "ls /backups/talus-*.dump >/dev/null 2>&1"]
+            periodSeconds: 5
+            failureThreshold: 60
+          # Liveness: the newest dump must be younger than two intervals (+1 min).
+          # If backups silently stop, the pod is restarted and the restart count shows it.
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'f=$(ls -1t /backups/talus-*.dump | head -n 1); test $(( $(date +%s) - $(stat -c %Y "$f") )) -lt $(( BACKUP_INTERVAL_SECONDS * 2 + 60 ))'
+            periodSeconds: 30
+            failureThreshold: 2
+      volumes:
+        - name: backups
+          persistentVolumeClaim:
+            claimName: backups
+        - name: script
+          configMap:
+            name: backup-script
+            defaultMode: 0755

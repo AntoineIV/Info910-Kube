@@ -1,0 +1,8 @@
+# Everything Talus lives in its own namespace: isolated names, one-command cleanup
+# (kubectl delete namespace talus) and DNS names like api.talus.svc.cluster.local.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: talus
+  labels:
+    part-of: talus

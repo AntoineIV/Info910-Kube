@@ -1,0 +1,61 @@
+# Static front-end (React + canvas game) served by an unprivileged nginx.
+# The image contains no configuration: the game fetches its tuning from /api/config.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: talus
+  labels:
+    app: web
+    part-of: talus
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+        part-of: talus
+    spec:
+      containers:
+        - name: web
+          image: talus/web:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+          # nginx starts in milliseconds: no startup probe needed.
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: talus
+  labels:
+    app: web
+    part-of: talus
+spec:
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

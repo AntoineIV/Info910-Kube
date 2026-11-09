@@ -1,0 +1,76 @@
+# Anti-cheat worker: replays every submitted run (seed + recorded inputs) with the
+# same deterministic game core as the browser, and only then credits the score and
+# coins. It accepts no traffic, so it has no Service and no readiness probe.
+# Replicas share the queue safely (SELECT ... FOR UPDATE SKIP LOCKED): scale it with
+#   kubectl -n talus scale deployment verifier --replicas=3
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: verifier
+  namespace: talus
+  labels:
+    app: verifier
+    part-of: talus
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: verifier
+  template:
+    metadata:
+      labels:
+        app: verifier
+        part-of: talus
+    spec:
+      containers:
+        - name: verifier
+          image: talus/verifier:1.0.0
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: platform
+          env:
+            # Downward API: each verified run records which pod replayed it.
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: DATABASE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: username
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: password
+            - name: HEARTBEAT_FILE
+              value: /run/heartbeat/beat
+          volumeMounts:
+            - name: heartbeat
+              mountPath: /run/heartbeat
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          # Startup: the worker loop has written its first heartbeat.
+          startupProbe:
+            exec:
+              command: ["test", "-f", "/run/heartbeat/beat"]
+            periodSeconds: 2
+            failureThreshold: 30
+          # Liveness: the loop touches the heartbeat file on every iteration (even when
+          # the database is down), so a heartbeat older than 30 s means a stuck worker.
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", 'test $(( $(date +%s) - $(stat -c %Y /run/heartbeat/beat) )) -lt 30']
+            periodSeconds: 10
+            failureThreshold: 3
+      volumes:
+        # Scratch space shared with the probe only; it does not need to survive the pod.
+        - name: heartbeat
+          emptyDir: {}

@@ -1,22 +1,45 @@
+import { request } from "node:http";
 import { InputRecorder, INPUT_BRAKE, INPUT_GAS, parseGameConfig, Sim } from "../packages/game-core/src";
 
 const args = process.argv.slice(2);
 const base = (args.find((a) => a.startsWith("--url="))?.slice(6) ?? "http://talus.local").replace(/\/$/, "");
 const user = args.find((a) => a.startsWith("--user="))?.slice(7) ?? "bot";
 const cheat = args.includes("--cheat");
+const ip = args.find((a) => a.startsWith("--ip="))?.slice(5);
 const seconds = Number(args.find((a) => a.startsWith("--seconds="))?.slice(10) ?? 30);
 let cookie = "";
 
-async function call(path: string, body?: unknown) {
-  const res = await fetch(`${base}/api${path}`, {
-    method: body === undefined ? "GET" : "POST",
-    headers: { "content-type": "application/json", cookie },
-    body: body === undefined ? undefined : JSON.stringify(body),
+function call(path: string, body?: unknown): Promise<{ status: number; data: any; servedBy: string | null }> {
+  const url = new URL(`${base}/api${path}`);
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const req = request(
+      {
+        host: ip ?? url.hostname,
+        port: url.port || 80,
+        path: url.pathname,
+        method: payload === undefined ? "GET" : "POST",
+        headers: { host: url.host, "content-type": "application/json", cookie, ...(payload ? { "content-length": Buffer.byteLength(payload) } : {}) },
+      },
+      (res) => {
+        let text = "";
+        res.on("data", (d) => (text += d));
+        res.on("end", () => {
+          const set = res.headers["set-cookie"]?.[0];
+          if (set) cookie = set.split(";")[0];
+          let data: any = null;
+          try {
+            data = JSON.parse(text);
+          } catch {}
+          const pod = res.headers["x-served-by"];
+          resolve({ status: res.statusCode ?? 0, data, servedBy: typeof pod === "string" ? pod : null });
+        });
+      },
+    );
+    req.on("error", reject);
+    if (payload) req.write(payload);
+    req.end();
   });
-  const set = res.headers.get("set-cookie");
-  if (set) cookie = set.split(";")[0];
-  const data = await res.json().catch(() => null);
-  return { status: res.status, data, servedBy: res.headers.get("x-served-by") };
 }
 
 const creds = { username: user, password: "demo-password" };

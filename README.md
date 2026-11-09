@@ -2,7 +2,7 @@
 
 TP Kubernetes (INFO910), Université Savoie Mont Blanc.
 
-**Membre (travail individuel) : _NOM Prénom à compléter_**
+**Membre (travail individuel) : Antoine GUICHARD**
 
 Talus est un jeu de conduite 2D pour navigateur : un petit véhicule roule sur un terrain infini, de plus en plus accidenté, en ramassant des pièces et des bidons d'essence. Un backend gère les comptes, le classement et une boutique d'améliorations. Côté Kubernetes, un worker indépendant **rejoue chaque partie** pour valider les scores (anti-triche), et la configuration du jeu se modifie **à chaud** via une ConfigMap. La base est sauvegardée en continu sur un volume persistant dédié, et des scripts rejouent des pannes de façon reproductible.
 

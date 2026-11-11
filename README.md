@@ -140,7 +140,7 @@ Le verifier ne monte pas `game-config` : il relit dans la base la configuration 
 | `api` | `talus/api:1.0.0` (Node 24) | 3000 | 2 | Comptes, parties, classement, boutique, configuration, sondes de santé |
 | `verifier` | `talus/verifier:1.0.0` (Node 24) | aucun | 2 | Rejoue les parties en attente et les valide ou les rejette. Ne reçoit aucun trafic |
 | `postgres` | `postgres:17-alpine` | 5432 | 1 | Base de données (comptes, parties, configurations) |
-| `backup` | `postgres:17-alpine` | aucun | 1 | `pg_dump` toutes les 2 min, garde les 10 derniers dumps |
+| `backup` | `postgres:17-alpine` | aucun | 1 | `pg_dump` toutes les 2 min (nouvel essai 10 s après un échec), garde les 10 derniers dumps |
 
 L'API et le verifier sont deux programmes distincts, avec deux images distinctes. Ils partagent seulement le code de simulation (`game-core`) et la base. On peut ainsi ajouter des verifiers quand la file d'attente grossit, sans toucher à l'API (voir la démo 3).
 
@@ -337,7 +337,7 @@ Au total, les requests valent environ 0,7 CPU et 0,9 Gi de mémoire : le projet 
 | **verifier** | premier battement de cœur écrit | battement de cœur de moins de 30 s (exec) : détecte une boucle bloquée. Le battement continue même si la base est en panne | aucune, car il n'est derrière aucun Service |
 | **postgres** | `pg_isready` (jusqu'à 60 s, pour `initdb`) | `tcpSocket` 5432, volontairement plus léger que la readiness | `pg_isready` |
 | **web** | inutile (nginx démarre instantanément) | `tcpSocket` | `GET /` |
-| **backup** | une première sauvegarde existe | la dernière sauvegarde a moins de 2 intervalles + 1 min | aucune, sans objet |
+| **backup** | ce conteneur a réussi sa première sauvegarde (les anciens dumps conservés sur le volume ne comptent pas) | sa dernière sauvegarde réussie a moins de 2 intervalles + 1 min | aucune, sans objet |
 
 L'idée générale : **liveness** répond à « faut-il redémarrer ce conteneur ? ». Elle ne doit échouer que si le redémarrer arrangerait les choses, et redémarrer l'API ne répare pas une base en panne. **Readiness** répond à « peut-on lui envoyer du trafic ? ». **Startup** protège les démarrages lents (initialisation de la base, migrations), pour qu'ils ne soient pas pris pour des pannes.
 

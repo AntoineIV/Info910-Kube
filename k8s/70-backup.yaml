@@ -59,13 +59,18 @@ data:
       file="/backups/talus-$stamp.dump"
       if pg_dump -Fc -f "$file.partial"; then
         mv "$file.partial" "$file"
+        # Container-local marker read by the probes. Old dumps kept on the
+        # retained volume must not count as a success of this container.
+        touch /tmp/last-backup-ok
         echo "[backup] wrote $(basename "$file") ($(du -h "$file" | cut -f1))"
         ls -1t /backups/talus-*.dump | tail -n +$((BACKUP_KEEP + 1)) | xargs -r rm -f
+        sleep "$BACKUP_INTERVAL_SECONDS"
       else
         rm -f "$file.partial"
-        echo "[backup] pg_dump failed, retrying at next interval"
+        # The database may still be starting: retry soon, not a full interval later.
+        echo "[backup] pg_dump failed, retrying in 10 s"
+        sleep 10
       fi
-      sleep "$BACKUP_INTERVAL_SECONDS"
     done
 ---
 # A long-running Deployment rather than a scheduled job: the loop interval and the
@@ -135,20 +140,22 @@ spec:
             limits:
               cpu: 500m
               memory: 256Mi
-          # Startup: wait (up to 5 min) for the first successful dump.
+          # Both probes read /tmp/last-backup-ok, touched by THIS container after each
+          # successful dump (dumps left on the volume by a previous pod do not count).
+          # Startup: wait (up to 5 min) for this container's first successful dump.
           startupProbe:
             exec:
-              command: ["sh", "-c", "ls /backups/talus-*.dump >/dev/null 2>&1"]
+              command: ["test", "-f", "/tmp/last-backup-ok"]
             periodSeconds: 5
             failureThreshold: 60
-          # Liveness: the newest dump must be younger than two intervals (+1 min).
+          # Liveness: the last successful dump must be younger than two intervals (+1 min).
           # If backups silently stop, the pod is restarted and the restart count shows it.
           livenessProbe:
             exec:
               command:
                 - sh
                 - -c
-                - 'f=$(ls -1t /backups/talus-*.dump | head -n 1); test $(( $(date +%s) - $(stat -c %Y "$f") )) -lt $(( BACKUP_INTERVAL_SECONDS * 2 + 60 ))'
+                - 'test $(( $(date +%s) - $(stat -c %Y /tmp/last-backup-ok) )) -lt $(( BACKUP_INTERVAL_SECONDS * 2 + 60 ))'
             periodSeconds: 30
             failureThreshold: 2
       volumes:

@@ -35,8 +35,14 @@ export class ConfigStore {
       if (changed) console.log(`[config] active game config ${hash} (gravity=${config.physics.gravity})`);
     } catch (err) {
       this.lastError = err instanceof z.ZodError ? z.prettifyError(err).replace(/\n/g, " ") : err instanceof Error ? err.message : String(err);
-      this.lastRaw = raw;
-      console.error(`[config] rejected config file, keeping ${this.current?.hash ?? "none"}: ${this.lastError}`);
+      // Only an invalid file is remembered as "seen". A database error (the config
+      // could not be stored) leaves lastRaw untouched, so the next tick retries it.
+      if (err instanceof z.ZodError || err instanceof SyntaxError) {
+        this.lastRaw = raw;
+        console.error(`[config] rejected config file, keeping ${this.current?.hash ?? "none"}: ${this.lastError}`);
+      } else {
+        console.error(`[config] could not store new config, will retry: ${this.lastError.split("\n")[0]}`);
+      }
       if (!this.current) throw err;
     }
   }

@@ -12,6 +12,42 @@ Côté Kubernetes, l'originalité tient en quatre points :
 - chaque **sonde de santé** répond à une question précise, pour qu'une panne de base retire l'API du trafic sans la faire redémarrer en boucle ;
 - la base est **sauvegardée en continu** sur un volume persistant qui survit à la suppression de la base, et **quatre scripts rejouent des pannes** de façon reproductible.
 
+## Comment lancer le projet
+
+**Prérequis** : `docker`, `minikube` et `kubectl` (testé sous Linux, driver docker). Toutes les commandes se lancent depuis la racine du dépôt.
+
+```bash
+# 1. Démarrer un cluster
+minikube start --driver=docker --cpus=4 --memory=6g
+
+# 2. Construire les 3 images et les charger dans minikube (~2 min)
+scripts/build-images.sh
+
+# 3. Déployer (Ingress, Secrets, ConfigMaps, base, API, verifier, web, sauvegardes)
+scripts/deploy.sh
+
+# 4. Rendre talus.local joignable
+echo "$(minikube ip) talus.local" | sudo tee -a /etc/hosts
+```
+
+**Jouer** : ouvrir <http://talus.local>, puis appuyer sur `→`. Pour que la distance entre au classement, créer un compte avec la tuile **Sign in**.
+
+**Vérifier** : `kubectl -n talus get pods` doit montrer 8 pods `Running` et `1/1` (2 api, 2 web, 2 verifier, `postgres-0`, 1 backup).
+
+**Voir les démonstrations** (section [7](#7-démonstrations-reproductibles)) : la 1 et la 2 ne demandent rien de plus. La 3 et la 4 utilisent un bot, qui demande Node.js 24 et pnpm.
+
+```bash
+scripts/demo-db-resilience.sh    # 1. supprimer la base : aucune donnée perdue, API retirée du trafic sans redémarrer
+scripts/demo-config.sh           # 2. changer la gravité à chaud via la ConfigMap, sans redémarrage
+pnpm install                     #    (une fois, pour le bot des démos 3 et 4)
+scripts/demo-anticheat.sh        # 3. des tricheurs rejetés par le verifier, mis à l'échelle à 3 répliques
+scripts/demo-backup-restore.sh   # 4. détruire la base et son volume, puis restaurer depuis les sauvegardes
+```
+
+**Tout supprimer** : `kubectl delete namespace talus && kubectl delete pv talus-backups`
+
+En cas de souci (pods en `ImagePullBackOff`, `talus.local` qui ne répond pas, macOS ou Windows), voir la section [4](#4-déployer-sur-kubernetes-minikube) et ses [problèmes fréquents](#problèmes-fréquents).
+
 ## Sommaire
 
 1. [Le jeu](#1-le-jeu)
